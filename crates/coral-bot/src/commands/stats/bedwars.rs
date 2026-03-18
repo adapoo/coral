@@ -1,0 +1,348 @@
+use std::collections::HashMap;
+use std::time::Instant;
+
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use hypixel::parsing::winstreaks;
+use hypixel::{
+    BedwarsPlayerStats, Mode, WinstreakSnapshot, extract_bedwars_stats,
+    extract_winstreak_snapshot,
+};
+use image::DynamicImage;
+use serenity::all::{
+    CommandInteraction, CommandOptionType, ComponentInteraction, Context, CreateActionRow,
+    CreateAttachment, CreateCommand, CreateCommandOption, CreateComponent,
+    CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse,
+};
+use tracing::info;
+
+use database::CacheRepository;
+use render::TagIcon;
+
+use database::MemberRepository;
+
+use crate::framework::Data;
+use crate::rendering::render_bedwars;
+
+use super::{
+    CACHE_TTL_SECS, create_mode_dropdown, disable_components, encode_png, extract_select_value,
+    extract_tag_icons, fetch_skin, parse_mode_value, resolve_uuid, send_deferred_error,
+    spawn_expiry,
+};
+
+pub struct BedwarsCache {
+    pub stats: BedwarsPlayerStats,
+    pub skin: Option<DynamicImage>,
+    pub tag_icons: Vec<TagIcon>,
+    pub snapshots: Vec<(DateTime<Utc>, WinstreakSnapshot)>,
+    pub mode: Mode,
+    pub sender_id: u64,
+    pub last_interaction: Instant,
+}
+
+enum StatsError {
+    PlayerNotFound,
+    NoStats(String),
+}
+
+enum CacheResult {
+    Ok(Vec<u8>, CreateActionRow<'static>),
+    Expired,
+    Ephemeral(Vec<u8>),
+}
+
+pub fn register() -> CreateCommand<'static> {
+    CreateCommand::new("bedwars")
+        .description("View a player's Bedwars stats")
+        .add_option(
+            CreateCommandOption::new(CommandOptionType::String, "player", "Player name or UUID"),
+        )
+}
+
+pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
+    let t = Instant::now();
+
+    let player_input = command
+        .data
+        .options
+        .first()
+        .and_then(|o| o.value.as_str())
+        .map(|s| s.to_string());
+
+    let sender_id = command.user.id.get();
+    let cache_key = command.id.to_string();
+
+    let player = match player_input {
+        Some(p) => p,
+        None => {
+            let members = MemberRepository::new(data.db.pool());
+            match members
+                .get_by_discord_id(sender_id as i64)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|m| m.uuid)
+            {
+                Some(uuid) => uuid,
+                None => {
+                    command.defer(&ctx.http).await?;
+                    return send_deferred_error(
+                        ctx,
+                        command,
+                        "Not Linked",
+                        "Link your account or provide a player name",
+                    )
+                    .await;
+                }
+            }
+        }
+    };
+
+    let (defer_result, result) = tokio::join!(
+        command.defer(&ctx.http),
+        fetch_player_data(data, &player),
+    );
+    defer_result?;
+    info!(at = ?t.elapsed(), "fetch done");
+
+    match result {
+        Ok(mut cache) => {
+            cache.sender_id = sender_id;
+
+            let png = render_and_encode(&cache)?;
+            info!(at = ?t.elapsed(), "render done");
+
+            let mode_row = CreateActionRow::SelectMenu(create_mode_dropdown(
+                "bedwars_mode",
+                &cache_key,
+                cache.mode,
+                &cache.stats,
+            ));
+
+            let expiry_key = cache_key.clone();
+
+            {
+                let mut store = data.bedwars_images.lock().unwrap();
+                evict_expired(&mut store);
+                store.insert(cache_key, cache);
+            }
+
+            command
+                .edit_response(
+                    &ctx.http,
+                    EditInteractionResponse::new()
+                        .new_attachment(CreateAttachment::bytes(png, "bedwars.png"))
+                        .components(vec![CreateComponent::ActionRow(mode_row)]),
+                )
+                .await?;
+
+            spawn_expiry(
+                ctx.http.clone(),
+                command.token.to_string(),
+                data.bedwars_images.clone(),
+                expiry_key,
+                |e: &BedwarsCache| e.last_interaction,
+            );
+            info!(player = %player, at = ?t.elapsed(), "send done");
+        }
+        Err(StatsError::PlayerNotFound) => {
+            send_deferred_error(
+                ctx,
+                command,
+                "Player Not Found",
+                &format!("Could not find player: {player}"),
+            )
+            .await?;
+        }
+        Err(StatsError::NoStats(username)) => {
+            send_deferred_error(
+                ctx,
+                command,
+                &format!("{username}'s Bedwars Stats"),
+                "This player has no Bedwars stats",
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn handle_mode_switch(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let Some(value) = extract_select_value(component) else {
+        return Ok(());
+    };
+    let Some((cache_key, mode)) = parse_mode_value(value) else {
+        return Ok(());
+    };
+
+    let result = resolve_mode_switch(data, cache_key, mode, component.user.id.get());
+
+    match result {
+        CacheResult::Ok(png, mode_row) => {
+            component
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::UpdateMessage(
+                        CreateInteractionResponseMessage::new()
+                            .add_file(CreateAttachment::bytes(png, "bedwars.png"))
+                            .components(vec![CreateComponent::ActionRow(mode_row)]),
+                    ),
+                )
+                .await?;
+        }
+        CacheResult::Expired => {
+            disable_components(ctx, component).await?;
+        }
+        CacheResult::Ephemeral(png) => {
+            component
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .add_file(CreateAttachment::bytes(png, "bedwars.png"))
+                            .ephemeral(true),
+                    ),
+                )
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_mode_switch(
+    data: &Data,
+    cache_key: &str,
+    mode: Mode,
+    user_id: u64,
+) -> CacheResult {
+    let mut store = data.bedwars_images.lock().unwrap();
+
+    let Some(entry) = store.get_mut(cache_key) else {
+        return CacheResult::Expired;
+    };
+
+    if entry.last_interaction.elapsed().as_secs() > CACHE_TTL_SECS {
+        store.remove(cache_key);
+        return CacheResult::Expired;
+    }
+
+    if entry.sender_id != user_id {
+        return render_ephemeral(entry, mode);
+    }
+
+    entry.mode = mode;
+    entry.last_interaction = Instant::now();
+    let mode_row = CreateActionRow::SelectMenu(create_mode_dropdown(
+        "bedwars_mode",
+        cache_key,
+        mode,
+        &entry.stats,
+    ));
+
+    match render_and_encode(entry) {
+        Ok(png) => CacheResult::Ok(png, mode_row),
+        Err(_) => CacheResult::Expired,
+    }
+}
+
+fn render_ephemeral(entry: &mut BedwarsCache, mode: Mode) -> CacheResult {
+    let original_mode = entry.mode;
+    entry.mode = mode;
+    let result = render_and_encode(entry);
+    entry.mode = original_mode;
+
+    match result {
+        Ok(png) => CacheResult::Ephemeral(png),
+        Err(_) => CacheResult::Expired,
+    }
+}
+
+fn render_and_encode(cache: &BedwarsCache) -> Result<Vec<u8>> {
+    let winstreaks = winstreaks::calculate(&cache.snapshots, cache.mode);
+    let skin = cache.skin.as_ref();
+    let image = render_bedwars(&cache.stats, cache.mode, skin, &winstreaks, &cache.tag_icons);
+    encode_png(&image)
+}
+
+async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, StatsError> {
+    let t = Instant::now();
+
+    let cached_uuid = resolve_uuid(data, player).await;
+    info!(at = ?t.elapsed(), cached = cached_uuid.is_some(), "resolve");
+
+    let (resp, guild_result, skin_result, history_result) = match cached_uuid {
+        Some(ref uuid) => {
+            let cache_repo = CacheRepository::new(data.db.pool());
+            let (api, guild, skin, history) = tokio::join!(
+                data.api.get_player_stats(player),
+                data.api.get_guild(uuid, Some("player")),
+                data.skin_provider.fetch(uuid),
+                cache_repo.get_all_snapshots_mapped(uuid, extract_winstreak_snapshot),
+            );
+            let resp = api.map_err(|_| StatsError::PlayerNotFound)?;
+
+            if resp.uuid == *uuid {
+                (resp, guild, skin, history)
+            } else {
+                let cache_repo = CacheRepository::new(data.db.pool());
+                let (guild, skin, history) = tokio::join!(
+                    data.api.get_guild(&resp.uuid, Some("player")),
+                    fetch_skin(data, &resp.uuid, resp.skin_url.as_deref()),
+                    cache_repo
+                        .get_all_snapshots_mapped(&resp.uuid, extract_winstreak_snapshot),
+                );
+                (resp, guild, skin, history)
+            }
+        }
+        None => {
+            let resp = data
+                .api
+                .get_player_stats(player)
+                .await
+                .map_err(|_| StatsError::PlayerNotFound)?;
+
+            let cache_repo = CacheRepository::new(data.db.pool());
+            let (guild, skin, history) = tokio::join!(
+                data.api.get_guild(&resp.uuid, Some("player")),
+                fetch_skin(data, &resp.uuid, resp.skin_url.as_deref()),
+                cache_repo.get_all_snapshots_mapped(&resp.uuid, extract_winstreak_snapshot),
+            );
+            (resp, guild, skin, history)
+        }
+    };
+    info!(at = ?t.elapsed(), "api done");
+
+    let hypixel_data = resp.hypixel.ok_or(StatsError::PlayerNotFound)?;
+    let username = resp.username.clone();
+
+    let guild_info = guild_result
+        .ok()
+        .flatten()
+        .map(|g| super::to_guild_info(&g));
+
+    let stats = extract_bedwars_stats(&username, &hypixel_data, guild_info)
+        .ok_or_else(|| StatsError::NoStats(username.clone()))?;
+
+    let snapshots = history_result.ok().unwrap_or_default();
+    info!(at = ?t.elapsed(), snapshots = snapshots.len(), "parse done");
+
+    Ok(BedwarsCache {
+        stats,
+        skin: skin_result.map(|s| s.data),
+        tag_icons: extract_tag_icons(&resp.tags),
+        snapshots,
+        mode: Mode::Overall,
+        sender_id: 0,
+        last_interaction: Instant::now(),
+    })
+}
+
+fn evict_expired(cache: &mut HashMap<String, BedwarsCache>) {
+    cache.retain(|_, v| v.last_interaction.elapsed().as_secs() <= CACHE_TTL_SECS);
+}

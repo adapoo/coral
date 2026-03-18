@@ -1,0 +1,364 @@
+use chrono::{DateTime, Utc};
+use sqlx::{FromRow, PgPool};
+
+pub struct BlacklistRepository<'a> {
+    pool: &'a PgPool,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct BlacklistPlayer {
+    pub id: i64,
+    pub uuid: String,
+    pub is_locked: bool,
+    pub lock_reason: Option<String>,
+    pub locked_by: Option<i64>,
+    pub locked_at: Option<DateTime<Utc>>,
+    pub evidence_thread: Option<String>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct PlayerTagRow {
+    pub id: i64,
+    pub player_id: i64,
+    pub tag_type: String,
+    pub reason: String,
+    pub added_by: i64,
+    pub added_on: DateTime<Utc>,
+    pub hide_username: bool,
+    pub reviewed_by: Option<Vec<i64>>,
+    pub removed_by: Option<i64>,
+    pub removed_on: Option<DateTime<Utc>>,
+}
+
+impl<'a> BlacklistRepository<'a> {
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn get_player(&self, uuid: &str) -> Result<Option<BlacklistPlayer>, sqlx::Error> {
+        sqlx::query_as(
+            r#"
+            SELECT id, uuid, is_locked, lock_reason, locked_by, locked_at, evidence_thread
+            FROM blacklist_players
+            WHERE uuid = $1
+            "#,
+        )
+        .bind(uuid)
+        .fetch_optional(self.pool)
+        .await
+    }
+
+    pub async fn get_or_create_player(&self, uuid: &str) -> Result<BlacklistPlayer, sqlx::Error> {
+        if let Some(player) = self.get_player(uuid).await? {
+            return Ok(player);
+        }
+
+        sqlx::query_as(
+            r#"
+            INSERT INTO blacklist_players (uuid)
+            VALUES ($1)
+            ON CONFLICT (uuid) DO UPDATE SET uuid = EXCLUDED.uuid
+            RETURNING id, uuid, is_locked, lock_reason, locked_by, locked_at, evidence_thread
+            "#,
+        )
+        .bind(uuid)
+        .fetch_one(self.pool)
+        .await
+    }
+
+    pub async fn get_tags(&self, uuid: &str) -> Result<Vec<PlayerTagRow>, sqlx::Error> {
+        sqlx::query_as(
+            r#"
+            SELECT pt.id, pt.player_id, pt.tag_type, pt.reason, pt.added_by, pt.added_on, pt.hide_username, pt.reviewed_by, pt.removed_by, pt.removed_on
+            FROM player_tags pt
+            JOIN blacklist_players bp ON bp.id = pt.player_id
+            WHERE bp.uuid = $1 AND pt.removed_on IS NULL
+            ORDER BY pt.added_on DESC
+            "#,
+        )
+        .bind(uuid)
+        .fetch_all(self.pool)
+        .await
+    }
+
+    pub async fn get_uuid_by_player_id(
+        &self,
+        player_id: i64,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let row: Option<(String,)> = sqlx::query_as(
+            r#"
+            SELECT uuid FROM blacklist_players WHERE id = $1
+            "#,
+        )
+        .bind(player_id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(|(uuid,)| uuid))
+    }
+
+    pub async fn get_tag_by_id(&self, tag_id: i64) -> Result<Option<PlayerTagRow>, sqlx::Error> {
+        sqlx::query_as(
+            r#"
+            SELECT id, player_id, tag_type, reason, added_by, added_on,
+                   hide_username, reviewed_by, removed_by, removed_on
+            FROM player_tags
+            WHERE id = $1 AND removed_on IS NULL
+            "#,
+        )
+        .bind(tag_id)
+        .fetch_optional(self.pool)
+        .await
+    }
+
+    pub async fn get_tag_history(&self, uuid: &str) -> Result<Vec<PlayerTagRow>, sqlx::Error> {
+        sqlx::query_as(
+            r#"
+            SELECT pt.id, pt.player_id, pt.tag_type, pt.reason, pt.added_by, pt.added_on, pt.hide_username, pt.reviewed_by, pt.removed_by, pt.removed_on
+            FROM player_tags pt
+            JOIN blacklist_players bp ON bp.id = pt.player_id
+            WHERE bp.uuid = $1
+            ORDER BY pt.added_on DESC
+            "#,
+        )
+        .bind(uuid)
+        .fetch_all(self.pool)
+        .await
+    }
+
+    pub async fn add_tag(
+        &self,
+        uuid: &str,
+        tag_type: &str,
+        reason: &str,
+        added_by: i64,
+        hide_username: bool,
+        reviewed_by: Option<&[i64]>,
+    ) -> Result<i64, sqlx::Error> {
+        let player = self.get_or_create_player(uuid).await?;
+
+        let (id,): (i64,) = sqlx::query_as(
+            r#"
+            INSERT INTO player_tags (player_id, tag_type, reason, added_by, hide_username, reviewed_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+            "#,
+        )
+        .bind(player.id)
+        .bind(tag_type)
+        .bind(reason)
+        .bind(added_by)
+        .bind(hide_username)
+        .bind(reviewed_by)
+        .fetch_one(self.pool)
+        .await?;
+
+        Ok(id)
+    }
+
+    pub async fn remove_tag(&self, tag_id: i64, removed_by: i64) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE player_tags
+            SET removed_by = $2, removed_on = NOW()
+            WHERE id = $1 AND removed_on IS NULL
+            "#,
+        )
+        .bind(tag_id)
+        .bind(removed_by)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn modify_tag(
+        &self,
+        tag_id: i64,
+        tag_type: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE player_tags
+            SET
+                tag_type = COALESCE($2, tag_type),
+                reason = COALESCE($3, reason)
+            WHERE id = $1 AND removed_on IS NULL
+            "#,
+        )
+        .bind(tag_id)
+        .bind(tag_type)
+        .bind(reason)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn lock_player(
+        &self,
+        uuid: &str,
+        reason: &str,
+        locked_by: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let player = self.get_or_create_player(uuid).await?;
+
+        let result = sqlx::query(
+            r#"
+            UPDATE blacklist_players
+            SET is_locked = true, lock_reason = $2, locked_by = $3, locked_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(player.id)
+        .bind(reason)
+        .bind(locked_by)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn unlock_player(&self, uuid: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE blacklist_players
+            SET is_locked = false, lock_reason = NULL, locked_by = NULL, locked_at = NULL
+            WHERE uuid = $1
+            "#,
+        )
+        .bind(uuid)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn get_players_batch(
+        &self,
+        uuids: &[String],
+    ) -> Result<Vec<(String, Vec<PlayerTagRow>)>, sqlx::Error> {
+        let tags: Vec<PlayerTagRow> = sqlx::query_as(
+            r#"
+            SELECT pt.id, pt.player_id, pt.tag_type, pt.reason, pt.added_by, pt.added_on, pt.hide_username, pt.reviewed_by, pt.removed_by, pt.removed_on
+            FROM player_tags pt
+            JOIN blacklist_players bp ON bp.id = pt.player_id
+            WHERE bp.uuid = ANY($1) AND pt.removed_on IS NULL
+            ORDER BY bp.uuid, pt.added_on DESC
+            "#,
+        )
+        .bind(uuids)
+        .fetch_all(self.pool)
+        .await?;
+
+        let players: Vec<BlacklistPlayer> = sqlx::query_as(
+            r#"
+            SELECT id, uuid, is_locked, lock_reason, locked_by, locked_at, evidence_thread
+            FROM blacklist_players
+            WHERE uuid = ANY($1)
+            "#,
+        )
+        .bind(uuids)
+        .fetch_all(self.pool)
+        .await?;
+
+        let mut result: Vec<(String, Vec<PlayerTagRow>)> = Vec::new();
+        for player in players {
+            let player_tags: Vec<PlayerTagRow> = tags
+                .iter()
+                .filter(|t| t.player_id == player.id)
+                .cloned()
+                .collect();
+            result.push((player.uuid, player_tags));
+        }
+
+        Ok(result)
+    }
+
+    pub async fn count_tags_by_user(&self, discord_id: i64) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*) FROM player_tags WHERE added_by = $1
+            "#,
+        )
+        .bind(discord_id)
+        .fetch_one(self.pool)
+        .await?;
+
+        Ok(count)
+    }
+
+    pub async fn set_evidence_thread(
+        &self,
+        uuid: &str,
+        thread_url: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE blacklist_players
+            SET evidence_thread = $2
+            WHERE uuid = $1
+            "#,
+        )
+        .bind(uuid)
+        .bind(thread_url)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn clear_evidence_thread(&self, uuid: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE blacklist_players
+            SET evidence_thread = NULL
+            WHERE uuid = $1
+            "#,
+        )
+        .bind(uuid)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn convert_tag_to_confirmed(
+        &self,
+        tag_id: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE player_tags
+            SET tag_type = 'confirmed_cheater'
+            WHERE id = $1 AND removed_on IS NULL
+            "#,
+        )
+        .bind(tag_id)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn revert_tag_from_confirmed(
+        &self,
+        tag_id: i64,
+        original_type: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE player_tags
+            SET tag_type = $2
+            WHERE id = $1 AND removed_on IS NULL
+            "#,
+        )
+        .bind(tag_id)
+        .bind(original_type)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+}

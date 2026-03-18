@@ -1,0 +1,35 @@
+[package]
+name = "render"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+hypixel = { path = "../hypixel" }
+
+image.workspace = true
+mctext.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+
+# Skin renderer dependencies
+wgpu = "24.0"
+glam = { version = "0.29", features = ["bytemuck"] }
+bytemuck = { version = "1.21", features = ["derive"] }
+pollster = "0.4"
+tracing.workspace = true
+
+# Preview binary dependencies
+reqwest = { workspace = true, features = ["blocking", "json"], optional = true }
+serde_json = { workspace = true, optional = true }
+base64 = { version = "0.22", optional = true }
+dotenvy = { version = "0.15", optional = true }
+
+[[bin]]
+name = "preview"
+required-features = ["preview"]
+
+[features]
+preview = ["reqwest", "serde_json", "base64", "dotenvy"]

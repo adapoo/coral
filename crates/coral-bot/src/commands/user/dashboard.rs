@@ -1,0 +1,207 @@
+use anyhow::Result;
+use serenity::all::{
+    ButtonStyle, CommandInteraction, ComponentInteraction, Context, CreateActionRow, CreateButton,
+    CreateCommand, CreateComponent, CreateContainer, CreateContainerComponent,
+    CreateInteractionResponse, CreateInteractionResponseMessage, MessageFlags,
+};
+
+use database::{BlacklistRepository, MemberRepository};
+
+use crate::framework::{AccessRank, Data};
+use crate::utils::{format_number, generate_api_key, resolve_username, separator, text};
+
+const COLOR_ERROR: u32 = 0xED4245;
+
+pub fn register() -> CreateCommand<'static> {
+    CreateCommand::new("dashboard").description("View your account dashboard and settings")
+}
+
+pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
+    let discord_id = command.user.id.get() as i64;
+    let repo = MemberRepository::new(data.db.pool());
+
+    let mut member = match repo.get_by_discord_id(discord_id).await? {
+        Some(m) => m,
+        None => {
+            repo.create(discord_id).await?;
+            repo.get_by_discord_id(discord_id).await?.unwrap()
+        }
+    };
+
+    if member.api_key.is_none() {
+        let key = generate_api_key();
+        repo.set_api_key(discord_id, &key).await?;
+        member.api_key = Some(key);
+    }
+
+    let components = build_dashboard_view(&member, data).await;
+
+    command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(components),
+            ),
+        )
+        .await?;
+
+    Ok(())
+}
+
+pub async fn handle_regenerate_key(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    _data: &Data,
+) -> Result<()> {
+    let confirm_view = vec![CreateComponent::Container(
+        CreateContainer::new(vec![
+            text("## Regenerate API Key"),
+            separator(),
+            text("Are you sure you would like to regenerate your API key? Your previous one will not work."),
+            CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+                CreateButton::new("confirm_regenerate_key")
+                    .label("Confirm")
+                    .style(ButtonStyle::Danger),
+            ])),
+        ]),
+    )];
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(confirm_view),
+            ),
+        )
+        .await?;
+
+    Ok(())
+}
+
+pub async fn handle_confirm_regenerate_key(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let discord_id = component.user.id.get() as i64;
+    let repo = MemberRepository::new(data.db.pool());
+
+    let Some(mut member) = repo.get_by_discord_id(discord_id).await? else {
+        return send_error(ctx, component, "You are not registered.").await;
+    };
+
+    if member.key_locked {
+        return send_error(ctx, component, "Your API key is locked.").await;
+    }
+
+    let new_key = generate_api_key();
+    repo.set_api_key(discord_id, &new_key).await?;
+    member.api_key = Some(new_key);
+
+    let components = build_dashboard_view(&member, data).await;
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(components),
+            ),
+        )
+        .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn build_dashboard_view(
+    member: &database::Member,
+    data: &Data,
+) -> Vec<CreateComponent<'static>> {
+    let discord_id = member.discord_id as u64;
+    let rank = AccessRank::of(data, discord_id, Some(member));
+
+    let mut parts: Vec<CreateContainerComponent> = vec![text("## Dashboard")];
+
+    parts.push(separator());
+    parts.push(text("### Primary Account"));
+    match &member.uuid {
+        Some(uuid) => {
+            let username = resolve_username(uuid, data).await;
+            let name = username.as_deref().unwrap_or(uuid);
+            parts.push(text(format!("**{name}**\n-# UUID: {uuid}")));
+            parts.push(CreateContainerComponent::ActionRow(
+                CreateActionRow::buttons(vec![
+                    CreateButton::new(format!("dashboard_accounts:{discord_id}"))
+                        .label("Manage Linked Accounts")
+                        .style(ButtonStyle::Secondary),
+                ]),
+            ));
+        }
+        None => {
+            parts.push(text("Not linked"));
+        }
+    }
+
+    parts.push(separator());
+    let api_key_text = if member.key_locked {
+        "**API Key:** Locked".into()
+    } else if let Some(key) = &member.api_key {
+        format!("**API Key:** ||`{key}`||")
+    } else {
+        "**API Key:** None".into()
+    };
+
+    parts.push(text(api_key_text));
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::buttons(vec![
+            CreateButton::new("regenerate_key")
+                .label("Regenerate")
+                .style(ButtonStyle::Primary)
+                .disabled(member.key_locked),
+        ]),
+    ));
+
+    let blacklist_repo = BlacklistRepository::new(data.db.pool());
+    let total_tags = blacklist_repo
+        .count_tags_by_user(member.discord_id)
+        .await
+        .unwrap_or(0);
+
+    parts.push(separator());
+    parts.push(text(format!(
+        "**Access Level:** {}\n**Requests:** {}\n**Tags Added:** {}\n**Accepted:** {}\n**Rejected:** {}\n**Accurate Verdicts:** {}\n**Joined:** <t:{}:D>",
+        rank.label(),
+        format_number(member.request_count as u64),
+        total_tags,
+        member.accepted_tags,
+        member.rejected_tags,
+        member.accurate_verdicts,
+        member.join_date.timestamp(),
+    )));
+
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+async fn send_error(ctx: &Context, component: &ComponentInteraction, message: &str) -> Result<()> {
+    let container = CreateComponent::Container(
+        CreateContainer::new(vec![text(message.to_string())]).accent_color(COLOR_ERROR),
+    );
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(vec![container]),
+            ),
+        )
+        .await?;
+
+    Ok(())
+}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Coral Admin</title>
+        <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+        <div class="layout">
+            <aside class="sidebar">
+                <h1>Coral Admin</h1>
+                <nav>
+                    <a class="nav-item" data-page="members">Members</a>
+                    <a class="nav-item" data-page="blacklist">Blacklist</a>
+                    <a class="nav-item" data-page="snapshots">Snapshots</a>
+                    <a class="nav-item" data-page="rate-limits">Rate Limits</a>
+                    <a class="nav-item" data-page="diagnostics">Diagnostics</a>
+                </nav>
+            </aside>
+            <main class="main" id="main">
+                <div class="loading">Loading...</div>
+            </main>
+        </div>
+        <script src="/app.js"></script>
+    </body>
+</html>
