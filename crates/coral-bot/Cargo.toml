@@ -12,6 +12,7 @@ hypixel = { path = "../hypixel" }
 clients.workspace = true
 database = { path = "../database" }
 blacklist = { path = "../blacklist" }
+coral-redis = { path = "../coral-redis" }
 render = { path = "../render" }
 
 serenity.workspace = true

@@ -5,8 +5,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use hypixel::parsing::winstreaks;
 use hypixel::{
-    BedwarsPlayerStats, Mode, WinstreakSnapshot, extract_bedwars_stats,
-    extract_winstreak_snapshot,
+    BedwarsPlayerStats, Mode, WinstreakSnapshot, extract_bedwars_stats, extract_winstreak_snapshot,
 };
 use image::DynamicImage;
 use serenity::all::{
@@ -14,7 +13,7 @@ use serenity::all::{
     CreateAttachment, CreateCommand, CreateCommandOption, CreateComponent,
     CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse,
 };
-use tracing::info;
+use tracing::debug;
 
 use database::CacheRepository;
 use render::TagIcon;
@@ -54,9 +53,11 @@ enum CacheResult {
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("bedwars")
         .description("View a player's Bedwars stats")
-        .add_option(
-            CreateCommandOption::new(CommandOptionType::String, "player", "Player name or UUID"),
-        )
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::String,
+            "player",
+            "Player name or UUID",
+        ))
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
@@ -98,19 +99,17 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         }
     };
 
-    let (defer_result, result) = tokio::join!(
-        command.defer(&ctx.http),
-        fetch_player_data(data, &player),
-    );
+    let (defer_result, result) =
+        tokio::join!(command.defer(&ctx.http), fetch_player_data(data, &player),);
     defer_result?;
-    info!(at = ?t.elapsed(), "fetch done");
+    debug!(at = ?t.elapsed(), "fetch done");
 
     match result {
         Ok(mut cache) => {
             cache.sender_id = sender_id;
 
             let png = render_and_encode(&cache)?;
-            info!(at = ?t.elapsed(), "render done");
+            debug!(at = ?t.elapsed(), "render done");
 
             let mode_row = CreateActionRow::SelectMenu(create_mode_dropdown(
                 "bedwars_mode",
@@ -143,7 +142,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                 expiry_key,
                 |e: &BedwarsCache| e.last_interaction,
             );
-            info!(player = %player, at = ?t.elapsed(), "send done");
+            debug!(player = %player, at = ?t.elapsed(), "send done");
         }
         Err(StatsError::PlayerNotFound) => {
             send_deferred_error(
@@ -215,12 +214,7 @@ pub async fn handle_mode_switch(
     Ok(())
 }
 
-fn resolve_mode_switch(
-    data: &Data,
-    cache_key: &str,
-    mode: Mode,
-    user_id: u64,
-) -> CacheResult {
+fn resolve_mode_switch(data: &Data, cache_key: &str, mode: Mode, user_id: u64) -> CacheResult {
     let mut store = data.bedwars_images.lock().unwrap();
 
     let Some(entry) = store.get_mut(cache_key) else {
@@ -266,7 +260,13 @@ fn render_ephemeral(entry: &mut BedwarsCache, mode: Mode) -> CacheResult {
 fn render_and_encode(cache: &BedwarsCache) -> Result<Vec<u8>> {
     let winstreaks = winstreaks::calculate(&cache.snapshots, cache.mode);
     let skin = cache.skin.as_ref();
-    let image = render_bedwars(&cache.stats, cache.mode, skin, &winstreaks, &cache.tag_icons);
+    let image = render_bedwars(
+        &cache.stats,
+        cache.mode,
+        skin,
+        &winstreaks,
+        &cache.tag_icons,
+    );
     encode_png(&image)
 }
 
@@ -274,7 +274,7 @@ async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, St
     let t = Instant::now();
 
     let cached_uuid = resolve_uuid(data, player).await;
-    info!(at = ?t.elapsed(), cached = cached_uuid.is_some(), "resolve");
+    debug!(at = ?t.elapsed(), cached = cached_uuid.is_some(), "resolve");
 
     let (resp, guild_result, skin_result, history_result) = match cached_uuid {
         Some(ref uuid) => {
@@ -294,8 +294,7 @@ async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, St
                 let (guild, skin, history) = tokio::join!(
                     data.api.get_guild(&resp.uuid, Some("player")),
                     fetch_skin(data, &resp.uuid, resp.skin_url.as_deref()),
-                    cache_repo
-                        .get_all_snapshots_mapped(&resp.uuid, extract_winstreak_snapshot),
+                    cache_repo.get_all_snapshots_mapped(&resp.uuid, extract_winstreak_snapshot),
                 );
                 (resp, guild, skin, history)
             }
@@ -316,7 +315,7 @@ async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, St
             (resp, guild, skin, history)
         }
     };
-    info!(at = ?t.elapsed(), "api done");
+    debug!(at = ?t.elapsed(), "api done");
 
     let hypixel_data = resp.hypixel.ok_or(StatsError::PlayerNotFound)?;
     let username = resp.username.clone();
@@ -330,7 +329,7 @@ async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, St
         .ok_or_else(|| StatsError::NoStats(username.clone()))?;
 
     let snapshots = history_result.ok().unwrap_or_default();
-    info!(at = ?t.elapsed(), snapshots = snapshots.len(), "parse done");
+    debug!(at = ?t.elapsed(), snapshots = snapshots.len(), "parse done");
 
     Ok(BedwarsCache {
         stats,

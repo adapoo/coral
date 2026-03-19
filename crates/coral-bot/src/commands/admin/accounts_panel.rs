@@ -10,11 +10,10 @@ use serenity::all::{
 use database::{AccountRepository, MemberRepository};
 
 use super::manage::fetch_context;
+use crate::commands::blacklist::channel;
 use crate::framework::{AccessRank, Data};
 use crate::interact;
 use crate::utils::{resolve_username, separator, text};
-
-const COLOR_ERROR: u32 = 0xED4245;
 
 fn context_prefix(custom_id: &str) -> &'static str {
     if custom_id.starts_with("dashboard_") {
@@ -165,7 +164,6 @@ async fn refresh_accounts_from_modal(
     interact::update_modal(ctx, modal, components).await
 }
 
-
 pub async fn handle_accounts_button(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -179,7 +177,8 @@ pub async fn handle_accounts_button(
     let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     refresh_accounts(ctx, component, data, invoker_rank, target_id).await
@@ -228,7 +227,8 @@ pub async fn handle_dashboard_accounts_back(
     let repo = MemberRepository::new(data.db.pool());
 
     let Some(member) = repo.get_by_discord_id(discord_id).await? else {
-        return interact::send_component_error(ctx, component, "You are not registered.").await;
+        return interact::send_component_error(ctx, component, "Error", "You are not registered.")
+            .await;
     };
 
     let components = crate::commands::user::dashboard::build_dashboard_view(&member, data).await;
@@ -278,11 +278,11 @@ pub async fn handle_add_account_modal(
     let is_self = invoker_id == target_id;
 
     if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
-        return interact::send_modal_error(ctx, modal, "Insufficient permissions").await;
+        return interact::send_modal_error(ctx, modal, "Error", "Insufficient permissions").await;
     }
 
     let Some(member) = &target else {
-        return interact::send_modal_error(ctx, modal, "User is not registered").await;
+        return interact::send_modal_error(ctx, modal, "Error", "User is not registered").await;
     };
 
     let stats = match data.api.get_player_stats(&username).await {
@@ -291,6 +291,7 @@ pub async fn handle_add_account_modal(
             return interact::send_modal_error(
                 ctx,
                 modal,
+                "Error",
                 &format!("Could not find player: {username}"),
             )
             .await;
@@ -319,6 +320,7 @@ pub async fn handle_add_account_modal(
         return interact::send_modal_error(
             ctx,
             modal,
+            "Error",
             "Your Discord must be linked in Hypixel social settings for this account",
         )
         .await;
@@ -342,7 +344,7 @@ pub async fn handle_add_account_modal(
                     .style(ButtonStyle::Secondary),
             ])),
         ])
-        .accent_color(COLOR_ERROR),
+        .accent_color(channel::COLOR_ERROR),
     ));
 
     interact::update_modal(ctx, modal, components).await
@@ -361,11 +363,13 @@ pub async fn handle_force_add(
     let (invoker_rank, target, _) = fetch_context(data, invoker_id, target_id).await?;
 
     if !is_self && invoker_rank < AccessRank::Moderator {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     let Some(member) = &target else {
-        return interact::send_component_error(ctx, component, "User is not registered").await;
+        return interact::send_component_error(ctx, component, "Error", "User is not registered")
+            .await;
     };
 
     crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await?;
@@ -388,11 +392,13 @@ pub async fn handle_remove_account(
     let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     let Some(member) = &target else {
-        return interact::send_component_error(ctx, component, "User is not registered").await;
+        return interact::send_component_error(ctx, component, "Error", "User is not registered")
+            .await;
     };
 
     if member.uuid.as_deref() == Some(&uuid) {
@@ -428,11 +434,13 @@ pub async fn handle_swap_primary(
     let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     let Some(member) = &target else {
-        return interact::send_component_error(ctx, component, "User is not registered").await;
+        return interact::send_component_error(ctx, component, "Error", "User is not registered")
+            .await;
     };
 
     let old_primary = member.uuid.as_deref().unwrap_or("");

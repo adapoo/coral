@@ -15,8 +15,6 @@ use crate::framework::{AccessRank, Data};
 use crate::interact;
 use crate::utils::{format_number, resolve_username, separator, text};
 
-const COLOR_ERROR: u32 = 0xED4245;
-
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("manage")
         .description("Open the user management panel")
@@ -36,6 +34,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         return interact::send_error(
             ctx,
             command,
+            "Error",
             "You don't have permission to use this command",
         )
         .await;
@@ -318,7 +317,8 @@ pub async fn handle_access_select(
     let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     let new_rank = AccessRank::from_level(new_level);
@@ -326,13 +326,15 @@ pub async fn handle_access_select(
         return interact::send_component_error(
             ctx,
             component,
+            "Error",
             "Cannot assign a rank equal to or above your own",
         )
         .await;
     }
 
     if target.is_none() {
-        return interact::send_component_error(ctx, component, "User is not registered").await;
+        return interact::send_component_error(ctx, component, "Error", "User is not registered")
+            .await;
     }
 
     let repo = MemberRepository::new(data.db.pool());
@@ -355,7 +357,8 @@ pub async fn handle_lock_button(
     let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     let repo = MemberRepository::new(data.db.pool());
@@ -378,7 +381,8 @@ pub async fn handle_unlock_button(
     let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     let repo = MemberRepository::new(data.db.pool());
@@ -401,7 +405,8 @@ pub async fn handle_register_button(
     let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     let input = CreateInputText::new(InputTextStyle::Short, "username")
@@ -437,7 +442,7 @@ pub async fn handle_register_modal(
     let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank {
-        return interact::send_modal_error(ctx, modal, "Insufficient permissions").await;
+        return interact::send_modal_error(ctx, modal, "Error", "Insufficient permissions").await;
     }
 
     let stats = match data.api.get_player_stats(&username).await {
@@ -446,6 +451,7 @@ pub async fn handle_register_modal(
             return interact::send_modal_error(
                 ctx,
                 modal,
+                "Error",
                 &format!("Could not find player: {username}"),
             )
             .await;
@@ -482,7 +488,7 @@ pub async fn handle_register_modal(
                     .style(ButtonStyle::Danger),
             ])),
         ])
-        .accent_color(COLOR_ERROR),
+        .accent_color(channel::COLOR_ERROR),
     );
 
     modal
@@ -511,7 +517,8 @@ pub async fn handle_force_link(
     let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     crate::accounts::link_primary(ctx, data, target_id, &uuid).await?;
@@ -531,11 +538,13 @@ pub async fn handle_toggle_tagging(
     let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Helper || invoker_rank <= target_rank {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     let Some(target_member) = target else {
-        return interact::send_component_error(ctx, component, "User is not registered").await;
+        return interact::send_component_error(ctx, component, "Error", "User is not registered")
+            .await;
     };
 
     let new_state = !target_member.tagging_disabled;
@@ -563,7 +572,8 @@ pub async fn handle_remove_strike(
     let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank {
-        return interact::send_component_error(ctx, component, "Insufficient permissions").await;
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
     }
 
     let repo = MemberRepository::new(data.db.pool());

@@ -4,6 +4,7 @@ use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use clients::normalize_uuid;
+use coral_redis::BlacklistEvent;
 use database::BlacklistRepository;
 
 use crate::auth::AuthenticatedMember;
@@ -19,6 +20,8 @@ const ALLOWED_TAG_TYPES: &[&str] = &[
 ];
 const ACCESS_LEVEL_HELPER: i16 = 2;
 const ACCESS_LEVEL_MODERATOR: i16 = 3;
+const MAX_REASON_LENGTH: usize = 500;
+const MAX_IDENTIFIER_LENGTH: usize = 36;
 
 #[derive(Deserialize)]
 struct AddTagRequest {
@@ -83,7 +86,13 @@ async fn add_tag(
     Json(request): Json<AddTagRequest>,
 ) -> Result<Json<TagIdResponse>, ApiError> {
     if member.0.tagging_disabled {
-        return Err(ApiError::Forbidden("tagging is disabled on your account".into()));
+        return Err(ApiError::Forbidden(
+            "tagging is disabled on your account".into(),
+        ));
+    }
+
+    if request.uuid.len() > MAX_IDENTIFIER_LENGTH {
+        return Err(ApiError::BadRequest("uuid too long".into()));
     }
 
     if !ALLOWED_TAG_TYPES.contains(&request.tag_type.as_str()) {
@@ -91,6 +100,12 @@ async fn add_tag(
             "invalid tag type '{}', allowed: {}",
             request.tag_type,
             ALLOWED_TAG_TYPES.join(", ")
+        )));
+    }
+
+    if request.reason.len() > MAX_REASON_LENGTH {
+        return Err(ApiError::BadRequest(format!(
+            "reason exceeds maximum length of {MAX_REASON_LENGTH} characters"
         )));
     }
 
@@ -116,13 +131,22 @@ async fn add_tag(
         .await
         .map_err(|e| ApiError::Internal(format!("failed to add tag: {e}")))?;
 
+    state
+        .event_publisher
+        .publish(&BlacklistEvent::TagAdded {
+            uuid,
+            tag_id: id,
+            added_by: member.0.discord_id,
+        })
+        .await;
+
     Ok(Json(TagIdResponse { id }))
 }
 
 async fn remove_tag(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
-    Path((_uuid, tag_id)): Path<(String, i64)>,
+    Path((uuid, tag_id)): Path<(String, i64)>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let repo = BlacklistRepository::new(state.db.pool());
 
@@ -135,7 +159,9 @@ async fn remove_tag(
     let is_helper = member.0.access_level >= ACCESS_LEVEL_HELPER;
 
     if !is_own_tag && !is_helper {
-        return Err(ApiError::Forbidden("you can only remove your own tags".into()));
+        return Err(ApiError::Forbidden(
+            "you can only remove your own tags".into(),
+        ));
     }
 
     let is_restricted = tag.tag_type == "confirmed_cheater" || tag.tag_type == "caution";
@@ -150,6 +176,17 @@ async fn remove_tag(
         .await
         .map_err(|e| ApiError::Internal(format!("failed to remove tag: {e}")))?;
 
+    if success {
+        state
+            .event_publisher
+            .publish(&BlacklistEvent::TagRemoved {
+                uuid: normalize_uuid(&uuid),
+                tag_id,
+                removed_by: member.0.discord_id,
+            })
+            .await;
+    }
+
     Ok(Json(SuccessResponse { success }))
 }
 
@@ -160,7 +197,9 @@ async fn overwrite_tag(
     Json(request): Json<OverwriteTagRequest>,
 ) -> Result<Json<TagIdResponse>, ApiError> {
     if member.0.tagging_disabled {
-        return Err(ApiError::Forbidden("tagging is disabled on your account".into()));
+        return Err(ApiError::Forbidden(
+            "tagging is disabled on your account".into(),
+        ));
     }
 
     if !ALLOWED_TAG_TYPES.contains(&request.update.tag_type.as_str()) {
@@ -168,6 +207,12 @@ async fn overwrite_tag(
             "invalid tag type '{}', allowed: {}",
             request.update.tag_type,
             ALLOWED_TAG_TYPES.join(", ")
+        )));
+    }
+
+    if request.update.reason.len() > MAX_REASON_LENGTH {
+        return Err(ApiError::BadRequest(format!(
+            "reason exceeds maximum length of {MAX_REASON_LENGTH} characters"
         )));
     }
 
@@ -189,7 +234,9 @@ async fn overwrite_tag(
     let is_helper = member.0.access_level >= ACCESS_LEVEL_HELPER;
 
     if !is_own_tag && !is_helper {
-        return Err(ApiError::Forbidden("you can only overwrite your own tags".into()));
+        return Err(ApiError::Forbidden(
+            "you can only overwrite your own tags".into(),
+        ));
     }
 
     repo.remove_tag(tag_id, member.0.discord_id)
@@ -208,6 +255,18 @@ async fn overwrite_tag(
         .await
         .map_err(|e| ApiError::Internal(format!("failed to add new tag: {e}")))?;
 
+    state
+        .event_publisher
+        .publish(&BlacklistEvent::TagOverwritten {
+            uuid,
+            old_tag_id: tag_id,
+            old_tag_type: tag.tag_type.clone(),
+            old_reason: tag.reason.clone(),
+            new_tag_id: id,
+            overwritten_by: member.0.discord_id,
+        })
+        .await;
+
     Ok(Json(TagIdResponse { id }))
 }
 
@@ -221,6 +280,12 @@ async fn lock_player(
         return Err(ApiError::Forbidden("moderator access required".into()));
     }
 
+    if request.reason.len() > MAX_REASON_LENGTH {
+        return Err(ApiError::BadRequest(format!(
+            "reason exceeds maximum length of {MAX_REASON_LENGTH} characters"
+        )));
+    }
+
     let uuid = normalize_uuid(&uuid);
     let repo = BlacklistRepository::new(state.db.pool());
 
@@ -228,6 +293,17 @@ async fn lock_player(
         .lock_player(&uuid, &request.reason, member.0.discord_id)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to lock player: {e}")))?;
+
+    if success {
+        state
+            .event_publisher
+            .publish(&BlacklistEvent::PlayerLocked {
+                uuid,
+                locked_by: member.0.discord_id,
+                reason: request.reason,
+            })
+            .await;
+    }
 
     Ok(Json(SuccessResponse { success }))
 }
@@ -248,6 +324,16 @@ async fn unlock_player(
         .unlock_player(&uuid)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to unlock player: {e}")))?;
+
+    if success {
+        state
+            .event_publisher
+            .publish(&BlacklistEvent::PlayerUnlocked {
+                uuid,
+                unlocked_by: member.0.discord_id,
+            })
+            .await;
+    }
 
     Ok(Json(SuccessResponse { success }))
 }

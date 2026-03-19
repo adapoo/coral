@@ -32,7 +32,13 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     let rank = AccessRank::of(data, invoker_id, invoker.as_ref());
 
     if rank < AccessRank::Moderator {
-        return send_reply(ctx, command, "You don't have permission to use this command", true).await;
+        return send_reply(
+            ctx,
+            command,
+            "You don't have permission to use this command",
+            true,
+        )
+        .await;
     }
 
     let sub = command.data.options.first().map(|o| o.name.as_str());
@@ -78,7 +84,13 @@ async fn handle_add(
 
     let target = repo.get_by_discord_id(target_id as i64).await?;
     if target.is_none() {
-        return send_reply(ctx, command, &format!("<@{target_id}> is not registered"), true).await;
+        return send_reply(
+            ctx,
+            command,
+            &format!("<@{target_id}> is not registered"),
+            true,
+        )
+        .await;
     }
 
     let target_rank = AccessRank::of(data, target_id, target.as_ref());
@@ -86,10 +98,17 @@ async fn handle_add(
     let invoker_rank = AccessRank::of(data, invoker_id, invoker.as_ref());
 
     if invoker_rank <= target_rank {
-        return send_reply(ctx, command, "Cannot strike a user with equal or higher rank", true).await;
+        return send_reply(
+            ctx,
+            command,
+            "Cannot strike a user with equal or higher rank",
+            true,
+        )
+        .await;
     }
 
-    repo.add_strike(target_id as i64, reason, invoker_id).await?;
+    repo.add_strike(target_id as i64, reason, invoker_id)
+        .await?;
 
     send_reply(
         ctx,

@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use clients::normalize_uuid;
+use clients::{is_uuid, normalize_uuid};
 use database::BlacklistRepository;
 
+use crate::error::ApiError;
 use crate::responses::TagResponse;
 use crate::state::AppState;
 
@@ -31,19 +31,30 @@ pub fn router() -> Router<AppState> {
 async fn batch_lookup(
     State(state): State<AppState>,
     Json(request): Json<BatchRequest>,
-) -> Result<Json<BatchResponse>, StatusCode> {
-    if request.uuids.len() > MAX_BATCH_SIZE {
-        return Err(StatusCode::BAD_REQUEST);
+) -> Result<Json<BatchResponse>, ApiError> {
+    if request.uuids.is_empty() {
+        return Err(ApiError::BadRequest("uuids array is empty".into()));
     }
 
-    let uuids: Vec<String> = request.uuids.iter().map(|u| normalize_uuid(u)).collect();
+    if request.uuids.len() > MAX_BATCH_SIZE {
+        return Err(ApiError::BadRequest(format!(
+            "batch size exceeds maximum of {MAX_BATCH_SIZE}"
+        )));
+    }
+
+    let uuids: Vec<String> = request
+        .uuids
+        .iter()
+        .filter(|u| is_uuid(u))
+        .map(|u| normalize_uuid(u))
+        .collect();
 
     let repo = BlacklistRepository::new(state.db.pool());
 
     let results = repo
         .get_players_batch(&uuids)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| ApiError::Internal(format!("batch lookup failed: {e}")))?;
 
     let players = results
         .into_iter()

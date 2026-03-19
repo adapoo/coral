@@ -12,6 +12,7 @@ hypixel = { path = "../hypixel" }
 clients.workspace = true
 database = { path = "../database" }
 blacklist = { path = "../blacklist" }
+coral-redis = { path = "../coral-redis" }
 
 axum.workspace = true
 tower.workspace = true
@@ -25,4 +26,5 @@ dotenvy.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 sqlx.workspace = true
+redis.workspace = true
 image.workspace = true

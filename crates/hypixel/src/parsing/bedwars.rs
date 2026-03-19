@@ -329,11 +329,36 @@ pub fn extract_winstreak_snapshot(player: &Value) -> Option<WinstreakSnapshot> {
 
     Some(WinstreakSnapshot {
         overall: mode(bw, "wins_bedwars", "losses_bedwars", "winstreak"),
-        solos: mode(bw, "eight_one_wins_bedwars", "eight_one_losses_bedwars", "eight_one_winstreak"),
-        doubles: mode(bw, "eight_two_wins_bedwars", "eight_two_losses_bedwars", "eight_two_winstreak"),
-        threes: mode(bw, "four_three_wins_bedwars", "four_three_losses_bedwars", "four_three_winstreak"),
-        fours: mode(bw, "four_four_wins_bedwars", "four_four_losses_bedwars", "four_four_winstreak"),
-        four_v_four: mode(bw, "two_four_wins_bedwars", "two_four_losses_bedwars", "two_four_winstreak"),
+        solos: mode(
+            bw,
+            "eight_one_wins_bedwars",
+            "eight_one_losses_bedwars",
+            "eight_one_winstreak",
+        ),
+        doubles: mode(
+            bw,
+            "eight_two_wins_bedwars",
+            "eight_two_losses_bedwars",
+            "eight_two_winstreak",
+        ),
+        threes: mode(
+            bw,
+            "four_three_wins_bedwars",
+            "four_three_losses_bedwars",
+            "four_three_winstreak",
+        ),
+        fours: mode(
+            bw,
+            "four_four_wins_bedwars",
+            "four_four_losses_bedwars",
+            "four_four_winstreak",
+        ),
+        four_v_four: mode(
+            bw,
+            "two_four_wins_bedwars",
+            "two_four_losses_bedwars",
+            "two_four_winstreak",
+        ),
     })
 }
 
@@ -398,7 +423,11 @@ mod tests {
     fn experience_for_level_roundtrip() {
         for level in [0, 1, 2, 3, 4, 50, 99, 100, 150, 200, 500, 1000] {
             let xp = experience_for_level(level);
-            assert_eq!(calculate_level(xp), level, "roundtrip failed for level {level}");
+            assert_eq!(
+                calculate_level(xp),
+                level,
+                "roundtrip failed for level {level}"
+            );
         }
     }
 }

@@ -6,6 +6,7 @@ members = [
     "crates/clients",
     "crates/database",
     "crates/render",
+    "crates/coral-redis",
     "crates/coral-api",
     "crates/coral-admin",
     "crates/migration",
@@ -41,6 +42,9 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chro
 image = "0.25"
 mctext = "1.3.2"
 
+# Redis
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -58,4 +62,5 @@ hypixel = { path = "crates/hypixel" }
 blacklist = { path = "crates/blacklist" }
 clients = { path = "crates/clients" }
 database = { path = "crates/database" }
+coral-redis = { path = "crates/coral-redis" }
 render = { path = "crates/render" }

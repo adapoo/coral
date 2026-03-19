@@ -281,7 +281,10 @@ impl<'a> MemberRepository<'a> {
         Ok(())
     }
 
-    pub async fn increment_accurate_verdicts(&self, discord_ids: &[i64]) -> Result<(), sqlx::Error> {
+    pub async fn increment_accurate_verdicts(
+        &self,
+        discord_ids: &[i64],
+    ) -> Result<(), sqlx::Error> {
         if discord_ids.is_empty() {
             return Ok(());
         }

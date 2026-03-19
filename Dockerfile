@@ -20,6 +20,7 @@ COPY crates/hypixel ./crates/hypixel
 COPY crates/blacklist ./crates/blacklist
 COPY crates/clients ./crates/clients
 COPY crates/database ./crates/database
+COPY crates/coral-redis ./crates/coral-redis
 COPY crates/render ./crates/render
 COPY crates/coral-api ./crates/coral-api
 COPY crates/coral-admin ./crates/coral-admin

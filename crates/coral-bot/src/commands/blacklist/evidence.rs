@@ -4,18 +4,19 @@ use database::BlacklistRepository;
 use serenity::all::{
     ButtonStyle, CommandInteraction, CommandOptionType, Component, ComponentInteraction,
     ComponentInteractionDataKind, Context, CreateActionRow, CreateAttachment, CreateButton,
-    CreateCommand, CreateCommandOption, CreateComponent, CreateContainer,
-    CreateContainerComponent, CreateForumPost, CreateInteractionResponse,
-    CreateInteractionResponseMessage, CreateMediaGallery, CreateMediaGalleryItem, CreateMessage,
-    CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, CreateTextDisplay,
-    CreateUnfurledMediaItem, EditAttachments, EditInteractionResponse, EditMessage, EditThread,
-    Message, MessageFlags, MessageId, ResolvedValue, ThreadId,
+    CreateCommand, CreateCommandOption, CreateComponent, CreateContainer, CreateContainerComponent,
+    CreateForumPost, CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateMediaGallery, CreateMediaGalleryItem, CreateMessage, CreateSelectMenu,
+    CreateSelectMenuKind, CreateSelectMenuOption, CreateTextDisplay, CreateUnfurledMediaItem,
+    EditAttachments, EditInteractionResponse, EditMessage, EditThread, Message, MessageFlags,
+    MessageId, ResolvedValue, ThreadId,
 };
 
-use super::channel::{COLOR_DANGER, post_overwritten_tag};
+use super::channel::COLOR_DANGER;
 use super::tag::get_rank;
 use crate::framework::{AccessRank, Data};
 use crate::utils::{format_uuid_dashed, separator, text};
+use coral_redis::BlacklistEvent;
 
 const QUALIFYING_TAGS: &[&str] = &["closet_cheater", "blatant_cheater", "confirmed_cheater"];
 
@@ -35,11 +36,23 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     let rank = get_rank(data, discord_id).await?;
 
     if rank < AccessRank::Helper {
-        return send_error(ctx, command, "Only helpers and above can use this command").await;
+        return crate::interact::send_deferred_error(
+            ctx,
+            command,
+            "Error",
+            "Only helpers and above can use this command",
+        )
+        .await;
     }
 
     let Some(forum_id) = data.evidence_forum_id else {
-        return send_error(ctx, command, "Evidence forum channel not configured").await;
+        return crate::interact::send_deferred_error(
+            ctx,
+            command,
+            "Error",
+            "Evidence forum channel not configured",
+        )
+        .await;
     };
 
     let player_name = command
@@ -55,7 +68,10 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     let player_info = match data.api.resolve(player_name).await {
         Ok(info) => info,
-        Err(_) => return send_error(ctx, command, "Player not found").await,
+        Err(_) => {
+            return crate::interact::send_deferred_error(ctx, command, "Error", "Player not found")
+                .await;
+        }
     };
 
     let repo = BlacklistRepository::new(data.db.pool());
@@ -66,9 +82,10 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .find(|t| QUALIFYING_TAGS.contains(&t.tag_type.as_str()));
 
     let Some(tag) = qualifying_tag else {
-        return send_error(
+        return crate::interact::send_deferred_error(
             ctx,
             command,
+            "Error",
             "Player does not have a closet cheater, blatant cheater, or confirmed cheater tag",
         )
         .await;
@@ -76,7 +93,11 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     let original_type = tag.tag_type.clone();
 
-    let thread_title = format!("{} | {}", player_info.username, format_uuid_dashed(&player_info.uuid));
+    let thread_title = format!(
+        "{} | {}",
+        player_info.username,
+        format_uuid_dashed(&player_info.uuid)
+    );
     let message_content = build_evidence_message(
         &player_info.username,
         &player_info.uuid,
@@ -93,7 +114,8 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     );
 
     let thread = forum_id.create_forum_post(&ctx.http, forum_post).await?;
-    let thread_url = format!("https://discord.com/channels/{}/{}",
+    let thread_url = format!(
+        "https://discord.com/channels/{}/{}",
         command.guild_id.map(|g| g.get()).unwrap_or(0),
         thread.id.get(),
     );
@@ -109,16 +131,16 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             &ctx.http,
             EditInteractionResponse::new()
                 .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(vec![CreateComponent::Container(
-                    CreateContainer::new(vec![CreateContainerComponent::TextDisplay(
+                .components(vec![CreateComponent::Container(CreateContainer::new(
+                    vec![CreateContainerComponent::TextDisplay(
                         CreateTextDisplay::new(format!(
                             "## {} Evidence Post Created\nPlayer: `{}`\nThread: <#{}>",
                             emote,
                             player_info.username,
                             thread.id.get()
                         )),
-                    )]),
-                )]),
+                    )],
+                ))]),
         )
         .await?;
 
@@ -128,7 +150,6 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 #[derive(Debug, Clone)]
 struct EvidenceItem {
     filename: String,
-    url: String,
 }
 
 struct EvidenceState {
@@ -161,7 +182,9 @@ fn build_evidence_message(
     let confirmed_def = lookup_tag("confirmed_cheater");
     let emote = confirmed_def.map(|d| d.emote).unwrap_or("");
     let original_def = lookup_tag(original_type);
-    let original_display = original_def.map(|d| d.display_name).unwrap_or(original_type);
+    let original_display = original_def
+        .map(|d| d.display_name)
+        .unwrap_or(original_type);
 
     let dashed_uuid = format_uuid_dashed(uuid);
 
@@ -173,11 +196,8 @@ fn build_evidence_message(
         header.push_str(&format!("\nReview: {url}"));
     }
 
-    let mut parts: Vec<CreateContainerComponent<'static>> = vec![
-        text(header),
-        separator(),
-        text("**Evidence**"),
-    ];
+    let mut parts: Vec<CreateContainerComponent<'static>> =
+        vec![text(header), separator(), text("**Evidence**")];
 
     if evidence.is_empty() {
         parts.push(text("-# No evidence added yet"));
@@ -208,7 +228,9 @@ fn build_evidence_message(
             CreateActionRow::SelectMenu(
                 CreateSelectMenu::new(
                     "evidence_remove",
-                    CreateSelectMenuKind::String { options: options.into() },
+                    CreateSelectMenuKind::String {
+                        options: options.into(),
+                    },
                 )
                 .placeholder("Remove evidence..."),
             ),
@@ -251,11 +273,8 @@ fn build_archived_evidence_message(
         header.push_str(&format!("\nReview: {url}"));
     }
 
-    let mut parts: Vec<CreateContainerComponent<'static>> = vec![
-        text(header),
-        separator(),
-        text("**Evidence (Archived)**"),
-    ];
+    let mut parts: Vec<CreateContainerComponent<'static>> =
+        vec![text(header), separator(), text("**Evidence (Archived)**")];
 
     if !state.evidence.is_empty() {
         let gallery_items: Vec<CreateMediaGalleryItem<'static>> = state
@@ -335,7 +354,6 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
                         let filename = filename.split('?').next().unwrap_or(filename);
                         evidence.push(EvidenceItem {
                             filename: filename.to_string(),
-                            url,
                         });
                     }
                 }
@@ -396,9 +414,11 @@ pub async fn handle_add_media(
             "Upload media evidence for **`{username}`** in this thread."
         )),
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
-            vec![CreateButton::new("evidence_cancel_upload")
-                .label("Cancel")
-                .style(ButtonStyle::Secondary)]
+            vec![
+                CreateButton::new("evidence_cancel_upload")
+                    .label("Cancel")
+                    .style(ButtonStyle::Secondary),
+            ]
             .into(),
         )),
     ]);
@@ -439,8 +459,13 @@ pub async fn handle_remove(
     let rank = get_rank(data, discord_id).await?;
 
     if rank < AccessRank::Helper {
-        return send_component_error(ctx, component, "Only helpers and above can remove evidence")
-            .await;
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Only helpers and above can remove evidence",
+        )
+        .await;
     }
 
     let idx: usize = match &component.data.kind {
@@ -461,11 +486,23 @@ pub async fn handle_remove(
     };
 
     let Some(mut state) = parse_state_from_message(&builder_msg) else {
-        return send_component_error(ctx, component, "Could not parse evidence state").await;
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Could not parse evidence state",
+        )
+        .await;
     };
 
     if idx >= state.evidence.len() {
-        return send_component_error(ctx, component, "Invalid evidence index").await;
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Invalid evidence index",
+        )
+        .await;
     }
 
     let removed_filename = state.evidence[idx].filename.clone();
@@ -485,7 +522,11 @@ pub async fn handle_remove(
         .components(components);
 
     let mut attachments = EditAttachments::keep_all(&builder_msg);
-    if let Some(att) = builder_msg.attachments.iter().find(|a| a.filename == removed_filename) {
+    if let Some(att) = builder_msg
+        .attachments
+        .iter()
+        .find(|a| a.filename == removed_filename)
+    {
         attachments = attachments.remove(att.id);
     }
     edit = edit.attachments(attachments);
@@ -501,11 +542,7 @@ pub async fn handle_remove(
     Ok(())
 }
 
-pub async fn archive_evidence_by_url(
-    ctx: &Context,
-    data: &Data,
-    thread_url: &str,
-) -> Result<()> {
+pub async fn archive_evidence_by_url(ctx: &Context, data: &Data, thread_url: &str) -> Result<()> {
     let Some(id_str) = thread_url.rsplit('/').next() else {
         return Ok(());
     };
@@ -548,7 +585,10 @@ pub async fn archive_evidence_by_url(
         .components(archived_message)
         .attachments(EditAttachments::keep_all(&builder_msg));
 
-    let _ = ctx.http.edit_message(channel_id, builder_msg_id, &edit, Vec::new()).await;
+    let _ = ctx
+        .http
+        .edit_message(channel_id, builder_msg_id, &edit, Vec::new())
+        .await;
 
     let _ = thread_id
         .edit(&ctx.http, EditThread::new().archived(true).locked(true))
@@ -566,12 +606,23 @@ pub async fn handle_archive(
     let rank = get_rank(data, discord_id).await?;
 
     if rank < AccessRank::Helper {
-        return send_component_error(ctx, component, "Only helpers and above can archive evidence")
-            .await;
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Only helpers and above can archive evidence",
+        )
+        .await;
     }
 
     let Some(state) = parse_state_from_message(&*component.message) else {
-        return send_component_error(ctx, component, "Could not parse evidence state").await;
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Could not parse evidence state",
+        )
+        .await;
     };
 
     let repo = BlacklistRepository::new(data.db.pool());
@@ -643,7 +694,8 @@ pub async fn handle_attachment_message(
     let channel_id = message.channel_id;
     let channel = ctx.http.get_channel(channel_id.into()).await?;
 
-    let parent_id = channel.clone()
+    let parent_id = channel
+        .clone()
         .thread()
         .map(|t| t.parent_id.get())
         .or_else(|| channel.guild().and_then(|c| c.parent_id).map(|id| id.get()));
@@ -658,7 +710,10 @@ pub async fn handle_attachment_message(
         .get_message(channel_id.into(), builder_msg_id)
         .await
     else {
-        tracing::warn!("Evidence: could not fetch builder message for thread {}", channel_id);
+        tracing::warn!(
+            "Evidence: could not fetch builder message for thread {}",
+            channel_id
+        );
         return Ok(());
     };
 
@@ -676,7 +731,9 @@ pub async fn handle_attachment_message(
         .await
         .unwrap_or_default();
 
-    let prompt_msg = messages.iter().find(|m| m.author.bot() && find_upload_prompt(m));
+    let prompt_msg = messages
+        .iter()
+        .find(|m| m.author.bot() && find_upload_prompt(m));
     let prompt_msg_id = prompt_msg.map(|m| m.id);
 
     let existing_count = state.evidence.len();
@@ -689,7 +746,6 @@ pub async fn handle_attachment_message(
         files.push(att);
         state.evidence.push(EvidenceItem {
             filename: filename.clone(),
-            url: format!("attachment://{filename}"),
         });
     }
 
@@ -716,14 +772,28 @@ pub async fn handle_attachment_message(
         .edit_message(channel_id.into(), builder_msg.id, &edit, files)
         .await?;
 
-    if existing_count == 0 && !state.original_type.is_empty() && state.original_type != "confirmed_cheater" {
+    if existing_count == 0
+        && !state.original_type.is_empty()
+        && state.original_type != "confirmed_cheater"
+    {
         let repo = BlacklistRepository::new(data.db.pool());
         let tags = repo.get_tags(&state.uuid).await?;
         if let Some(tag) = tags.iter().find(|t| t.tag_type == state.original_type) {
+            let old_tag_type = tag.tag_type.clone();
+            let old_reason = tag.reason.clone();
+            let old_tag_id = tag.id;
             repo.convert_tag_to_confirmed(tag.id).await?;
-            super::channel::post_overwritten_tag(
-                ctx, data, &state.uuid, &state.username, &repo.get_tag_by_id(tag.id).await?.unwrap(),
-            ).await;
+            if let Some(updated_tag) = repo.get_tag_by_id(tag.id).await? {
+                let event = BlacklistEvent::TagOverwritten {
+                    uuid: state.uuid.clone(),
+                    old_tag_id,
+                    old_tag_type,
+                    old_reason,
+                    new_tag_id: updated_tag.id,
+                    overwritten_by: message.author.id.get() as i64,
+                };
+                data.event_publisher.publish(&event).await;
+            }
         }
     }
 
@@ -748,6 +818,7 @@ pub async fn create_evidence_from_review(
     tag_id: i64,
     media_urls: &[String],
     review_thread_url: Option<&str>,
+    approved_by: i64,
 ) -> Result<String> {
     let Some(forum_id) = data.evidence_forum_id else {
         anyhow::bail!("Evidence forum channel not configured");
@@ -774,14 +845,14 @@ pub async fn create_evidence_from_review(
         if let Ok(att) = CreateAttachment::url(&ctx.http, url, filename.clone()).await {
             evidence.push(EvidenceItem {
                 filename: filename.clone(),
-                url: format!("attachment://{filename}"),
             });
             files.push(att);
         }
     }
 
     let thread_title = format!("{} | {}", username, format_uuid_dashed(uuid));
-    let initial_components = build_evidence_message(username, uuid, original_type, &[], review_thread_url);
+    let initial_components =
+        build_evidence_message(username, uuid, original_type, &[], review_thread_url);
 
     let message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
@@ -797,7 +868,13 @@ pub async fn create_evidence_from_review(
         let mut edit = EditMessage::new()
             .content("")
             .flags(MessageFlags::IS_COMPONENTS_V2)
-            .components(build_evidence_message(username, uuid, original_type, &evidence, review_thread_url));
+            .components(build_evidence_message(
+                username,
+                uuid,
+                original_type,
+                &evidence,
+                review_thread_url,
+            ));
 
         let mut attachments = EditAttachments::new();
         for f in &files {
@@ -819,46 +896,15 @@ pub async fn create_evidence_from_review(
     repo.set_evidence_thread(uuid, &thread_url).await?;
 
     if !already_confirmed {
-        if let Ok(Some(tag)) = repo.get_tag_by_id(tag_id).await {
-            post_overwritten_tag(ctx, data, uuid, username, &tag).await;
+        if let Ok(Some(_tag)) = repo.get_tag_by_id(tag_id).await {
+            let event = BlacklistEvent::TagAdded {
+                uuid: uuid.to_string(),
+                tag_id,
+                added_by: approved_by,
+            };
+            data.event_publisher.publish(&event).await;
         }
     }
 
     Ok(thread_url)
-}
-
-async fn send_error(ctx: &Context, command: &CommandInteraction, message: &str) -> Result<()> {
-    let container = CreateContainer::new(vec![CreateContainerComponent::TextDisplay(
-        CreateTextDisplay::new(format!("## Error\n{}", message)),
-    )])
-    .accent_color(COLOR_DANGER);
-
-    command
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new()
-                .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(vec![CreateComponent::Container(container)]),
-        )
-        .await?;
-
-    Ok(())
-}
-
-async fn send_component_error(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    message: &str,
-) -> Result<()> {
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .content(message)
-                    .ephemeral(true),
-            ),
-        )
-        .await?;
-    Ok(())
 }

@@ -30,9 +30,13 @@ pub fn router(state: AppState) -> Router<AppState> {
             require_internal_or_admin,
         ));
 
-    let mod_routes = Router::new()
-        .merge(tags::mod_router())
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_moderator));
+    let mod_routes =
+        Router::new()
+            .merge(tags::mod_router())
+            .route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_moderator,
+            ));
 
     let cubelify_routes = cubelify::router(state);
 

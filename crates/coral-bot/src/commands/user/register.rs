@@ -140,7 +140,7 @@ pub async fn handle_retry_button(
     if let Some(remaining) = cooldown_remaining {
         let expiry = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs()
             + remaining.as_secs();
 

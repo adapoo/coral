@@ -8,9 +8,8 @@ use serenity::all::{
 use database::{BlacklistRepository, MemberRepository};
 
 use crate::framework::{AccessRank, Data};
+use crate::interact;
 use crate::utils::{format_number, generate_api_key, resolve_username, separator, text};
-
-const COLOR_ERROR: u32 = 0xED4245;
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("dashboard").description("View your account dashboard and settings")
@@ -24,7 +23,9 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         Some(m) => m,
         None => {
             repo.create(discord_id).await?;
-            repo.get_by_discord_id(discord_id).await?.unwrap()
+            repo.get_by_discord_id(discord_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("failed to retrieve member after creation"))?
         }
     };
 
@@ -55,18 +56,18 @@ pub async fn handle_regenerate_key(
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    let confirm_view = vec![CreateComponent::Container(
-        CreateContainer::new(vec![
-            text("## Regenerate API Key"),
-            separator(),
-            text("Are you sure you would like to regenerate your API key? Your previous one will not work."),
-            CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
-                CreateButton::new("confirm_regenerate_key")
-                    .label("Confirm")
-                    .style(ButtonStyle::Danger),
-            ])),
-        ]),
-    )];
+    let confirm_view = vec![CreateComponent::Container(CreateContainer::new(vec![
+        text("## Regenerate API Key"),
+        separator(),
+        text(
+            "Are you sure you would like to regenerate your API key? Your previous one will not work.",
+        ),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+            CreateButton::new("confirm_regenerate_key")
+                .label("Confirm")
+                .style(ButtonStyle::Danger),
+        ])),
+    ]))];
 
     component
         .create_response(
@@ -91,11 +92,13 @@ pub async fn handle_confirm_regenerate_key(
     let repo = MemberRepository::new(data.db.pool());
 
     let Some(mut member) = repo.get_by_discord_id(discord_id).await? else {
-        return send_error(ctx, component, "You are not registered.").await;
+        return interact::send_component_error(ctx, component, "Error", "You are not registered.")
+            .await;
     };
 
     if member.key_locked {
-        return send_error(ctx, component, "Your API key is locked.").await;
+        return interact::send_component_error(ctx, component, "Error", "Your API key is locked.")
+            .await;
     }
 
     let new_key = generate_api_key();
@@ -185,23 +188,4 @@ pub(crate) async fn build_dashboard_view(
     )));
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
-}
-
-async fn send_error(ctx: &Context, component: &ComponentInteraction, message: &str) -> Result<()> {
-    let container = CreateComponent::Container(
-        CreateContainer::new(vec![text(message.to_string())]).accent_color(COLOR_ERROR),
-    );
-
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(vec![container]),
-            ),
-        )
-        .await?;
-
-    Ok(())
 }

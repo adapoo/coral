@@ -131,8 +131,12 @@ impl Shape for TextBox {
         let measurements = self.measure_lines(renderer);
         let (content_w, content_h) =
             Self::content_size(&measurements, self.line_spacing * self.scale);
-        let width = self.width.unwrap_or(content_w.ceil() as u32 + self.padding.0 * 2);
-        let height = self.height.unwrap_or(content_h.ceil() as u32 + self.padding.1 * 2);
+        let width = self
+            .width
+            .unwrap_or(content_w.ceil() as u32 + self.padding.0 * 2);
+        let height = self
+            .height
+            .unwrap_or(content_h.ceil() as u32 + self.padding.1 * 2);
         (width, height)
     }
 
@@ -198,8 +202,7 @@ impl Shape for TextBox {
 
         let mut cursor_y = ctx.y as f32 + start_y;
 
-        for (i, (line, (line_w, line_h))) in
-            self.lines.iter().zip(measurements.iter()).enumerate()
+        for (i, (line, (line_w, line_h))) in self.lines.iter().zip(measurements.iter()).enumerate()
         {
             let text_x = match self.align_x {
                 Align::Left | Align::Top => ctx.x as f32 + self.padding.0 as f32,

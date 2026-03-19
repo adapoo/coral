@@ -9,9 +9,10 @@ use serenity::all::{
 
 use database::{BlacklistRepository, MemberRepository};
 
+use crate::commands::blacklist::channel;
 use crate::framework::Data;
+use crate::interact;
 
-const COLOR_INFO: u32 = 0x5865F2;
 const COLOR_NOT_FOUND: u32 = 0xFF5555;
 const FACE_SIZE: u32 = 128;
 const FACE_FILENAME: &str = "face.png";
@@ -36,9 +37,10 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .unwrap_or(false);
 
     if !is_staff {
-        return send_error(
+        return interact::send_error(
             ctx,
             command,
+            "Error",
             "You don't have permission to use this command",
         )
         .await;
@@ -54,7 +56,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     let stats = match data.api.get_player_stats(player).await {
         Ok(s) => s,
         Err(_) => {
-            return send_error(ctx, command, "Player not found").await;
+            return interact::send_error(ctx, command, "Error", "Player not found").await;
         }
     };
 
@@ -145,9 +147,9 @@ fn build_info_container(
     let header = if has_face {
         CreateContainerComponent::Section(CreateSection::new(
             vec![CreateSectionComponent::TextDisplay(header_text)],
-            CreateSectionAccessory::Thumbnail(CreateThumbnail::new(
-                CreateUnfurledMediaItem::new(format!("attachment://{}", FACE_FILENAME)),
-            )),
+            CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
+                format!("attachment://{}", FACE_FILENAME),
+            ))),
         ))
     } else {
         CreateContainerComponent::TextDisplay(header_text)
@@ -165,7 +167,7 @@ fn build_info_container(
     let color = if tag_count > 0 {
         COLOR_NOT_FOUND
     } else {
-        COLOR_INFO
+        channel::COLOR_INFO
     };
 
     CreateContainer::new(vec![
@@ -184,18 +186,4 @@ fn calculate_network_level(exp: f64) -> u32 {
     const GROWTH_DIVIDES_2: f64 = 2.0 / GROWTH;
 
     ((REVERSE_PQ_PREFIX + (REVERSE_CONST + GROWTH_DIVIDES_2 * exp).sqrt()) + 1.0) as u32
-}
-
-async fn send_error(ctx: &Context, command: &CommandInteraction, message: &str) -> Result<()> {
-    command
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .content(message)
-                    .ephemeral(true),
-            ),
-        )
-        .await?;
-    Ok(())
 }

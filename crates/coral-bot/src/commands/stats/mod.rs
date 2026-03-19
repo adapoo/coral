@@ -10,9 +10,9 @@ use anyhow::Result;
 use hypixel::{BedwarsPlayerStats, GuildInfo, Mode};
 use image::RgbaImage;
 use serenity::all::{
-    Color, CommandInteraction, ComponentInteraction, Context, CreateEmbed,
-    CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu,
-    CreateSelectMenuKind, CreateSelectMenuOption, EditInteractionResponse, Http, MessageFlags,
+    ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, EditInteractionResponse, Http,
+    MessageFlags,
 };
 
 use database::CacheRepository;
@@ -21,7 +21,6 @@ use render::TagIcon;
 use crate::api::{GuildResponse, TagInfo};
 use crate::framework::Data;
 
-const COLOR_ERROR: u32 = 0xFF5555;
 pub(super) const CACHE_TTL_SECS: u64 = 2 * 60;
 
 const MODE_CHOICES: &[(Mode, &str)] = &[
@@ -113,23 +112,7 @@ pub(crate) fn to_guild_info(guild: &GuildResponse) -> GuildInfo {
     }
 }
 
-pub async fn send_deferred_error(
-    ctx: &Context,
-    command: &CommandInteraction,
-    title: &str,
-    description: &str,
-) -> Result<()> {
-    let embed = CreateEmbed::new()
-        .title(title)
-        .description(description)
-        .color(Color::new(COLOR_ERROR));
-
-    command
-        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-        .await?;
-
-    Ok(())
-}
+pub use crate::interact::send_deferred_error;
 
 pub async fn disable_components(ctx: &Context, component: &ComponentInteraction) -> Result<()> {
     let gallery = extract_gallery_components(&component.message.components);

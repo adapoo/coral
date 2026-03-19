@@ -12,8 +12,8 @@ use crate::canvas::{
 };
 
 use super::common::{
-    BAR_COLOR, color_name_to_named, colors, draw_progress_bar, format_number,
-    format_percent, format_ratio, format_timestamp, stat_line,
+    BAR_COLOR, color_name_to_named, colors, draw_progress_bar, format_number, format_percent,
+    format_ratio, format_timestamp, stat_line,
 };
 use super::prestiges::{build_prestige_text, prestige_colors, prestige_star};
 
@@ -403,11 +403,7 @@ struct ModeShareBox {
 }
 
 impl ModeShareBox {
-    fn from_delta(
-        current: &BedwarsPlayerStats,
-        previous: &BedwarsPlayerStats,
-        mode: Mode,
-    ) -> Self {
+    fn from_delta(current: &BedwarsPlayerStats, previous: &BedwarsPlayerStats, mode: Mode) -> Self {
         let cur_mode = current.get_mode_stats(mode);
         let prev_mode = previous.get_mode_stats(mode);
         let cur_overall = &current.overall;
@@ -425,20 +421,28 @@ impl ModeShareBox {
 
         Self {
             wins_pct: pct(
-                cur_mode.wins, prev_mode.wins,
-                cur_overall.wins, prev_overall.wins,
+                cur_mode.wins,
+                prev_mode.wins,
+                cur_overall.wins,
+                prev_overall.wins,
             ),
             finals_pct: pct(
-                cur_mode.final_kills, prev_mode.final_kills,
-                cur_overall.final_kills, prev_overall.final_kills,
+                cur_mode.final_kills,
+                prev_mode.final_kills,
+                cur_overall.final_kills,
+                prev_overall.final_kills,
             ),
             kills_pct: pct(
-                cur_mode.kills, prev_mode.kills,
-                cur_overall.kills, prev_overall.kills,
+                cur_mode.kills,
+                prev_mode.kills,
+                cur_overall.kills,
+                prev_overall.kills,
             ),
             beds_pct: pct(
-                cur_mode.beds_broken, prev_mode.beds_broken,
-                cur_overall.beds_broken, prev_overall.beds_broken,
+                cur_mode.beds_broken,
+                prev_mode.beds_broken,
+                cur_overall.beds_broken,
+                prev_overall.beds_broken,
             ),
         }
     }
@@ -474,8 +478,7 @@ impl Shape for ModeShareBox {
             let filled_w = (pct / 100.0 * bar_width as f64).round() as u32;
             if filled_w > 0 {
                 draw_progress_bar(
-                    ctx, bx, by, filled_w, bar_height, 0,
-                    1.0, BAR_COLOR, BAR_COLOR,
+                    ctx, bx, by, filled_w, bar_height, 0, 1.0, BAR_COLOR, BAR_COLOR,
                 );
             }
 
@@ -490,9 +493,14 @@ impl Shape for ModeShareBox {
             let ty = by as f32 + (bar_height as f32 - th) / 2.0;
 
             ctx.renderer.draw(
-                ctx.buffer.as_mut(), cw, ch,
-                ctx.x as f32 + tx, ctx.y as f32 + ty,
-                &text, text_font, true,
+                ctx.buffer.as_mut(),
+                cw,
+                ch,
+                ctx.x as f32 + tx,
+                ctx.y as f32 + ty,
+                &text,
+                text_font,
+                true,
             );
         }
     }
@@ -976,7 +984,11 @@ impl LevelSection {
         let s = format!("+{:.2}", self.stars_gained);
         let value = s.strip_suffix(".00").unwrap_or(&s);
 
-        let num_color = if colors.len() > 6 { colors[1] } else { colors[0] };
+        let num_color = if colors.len() > 6 {
+            colors[1]
+        } else {
+            colors[0]
+        };
         let star_color = colors[colors.len() - 2];
 
         let num_encoded = format!("§{}{}", num_color, value);
@@ -1155,9 +1167,7 @@ impl Shape for SkinSection<'_> {
             let skin_y = level_bottom + (available_h - new_h) / 2 + 12;
 
             let mut skin_ctx = ctx.at(skin_x as i32, skin_y as i32);
-            Image::new(skin)
-                .size(new_w, new_h)
-                .draw(&mut skin_ctx);
+            Image::new(skin).size(new_w, new_h).draw(&mut skin_ctx);
         }
     }
 

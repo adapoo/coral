@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use image::{imageops::FilterType, DynamicImage, RgbaImage};
+use image::{DynamicImage, RgbaImage, imageops::FilterType};
 
 const URCHIN_PNG: &[u8] = include_bytes!("../assets/urchin.png");
 const ANTISNIPER_PNG: &[u8] = include_bytes!("../assets/antisniper.png");
@@ -81,13 +81,15 @@ fn corner_center(px: u32, py: u32, w: u32, h: u32, r: f32) -> (Option<f32>, Opti
 pub fn tag_icon(mdi_name: &str, size: u32, color: u32) -> Option<DynamicImage> {
     let decoded = match mdi_name {
         "mdi-alert-octagram" => decode_once(&MDI_ALERT_OCTAGRAM_DECODED, MDI_ALERT_OCTAGRAM),
-        "mdi-alert-octagram-outline" => {
-            decode_once(&MDI_ALERT_OCTAGRAM_OUTLINE_DECODED, MDI_ALERT_OCTAGRAM_OUTLINE)
-        }
+        "mdi-alert-octagram-outline" => decode_once(
+            &MDI_ALERT_OCTAGRAM_OUTLINE_DECODED,
+            MDI_ALERT_OCTAGRAM_OUTLINE,
+        ),
         "mdi-target-variant" => decode_once(&MDI_TARGET_VARIANT_DECODED, MDI_TARGET_VARIANT),
-        "mdi-alert-rhombus-outline" => {
-            decode_once(&MDI_ALERT_RHOMBUS_OUTLINE_DECODED, MDI_ALERT_RHOMBUS_OUTLINE)
-        }
+        "mdi-alert-rhombus-outline" => decode_once(
+            &MDI_ALERT_RHOMBUS_OUTLINE_DECODED,
+            MDI_ALERT_RHOMBUS_OUTLINE,
+        ),
         "mdi-account-alert" => decode_once(&MDI_ACCOUNT_ALERT_DECODED, MDI_ACCOUNT_ALERT),
         "mdi-information-outline" => {
             decode_once(&MDI_INFORMATION_OUTLINE_DECODED, MDI_INFORMATION_OUTLINE)

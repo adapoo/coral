@@ -213,11 +213,11 @@ impl Renderer {
         let buffer_slice = output_buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            let _ = tx.send(result);
         });
         self.ctx.device.poll(wgpu::Maintain::Wait);
         rx.recv()
-            .unwrap()
+            .map_err(|_| SkinError::Render("GPU readback channel closed".into()))?
             .map_err(|e| SkinError::Render(e.to_string()))?;
 
         let data = buffer_slice.get_mapped_range();

@@ -85,8 +85,13 @@ pub fn register() -> CreateCommand<'static> {
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     let Some(guild_id): Option<GuildId> = command.guild_id else {
-        return interact::send_error(ctx, command, "This command can only be used in a server.")
-            .await;
+        return interact::send_error(
+            ctx,
+            command,
+            "Error",
+            "This command can only be used in a server.",
+        )
+        .await;
     };
 
     let repo = GuildConfigRepository::new(data.db.pool());
@@ -331,21 +336,19 @@ fn build_role_section(
 }
 
 fn post_link_embed_container() -> CreateComponent<'static> {
-    CreateComponent::Container(
-        CreateContainer::new(vec![
-            text(
-                "## Account Linking\n\n\
+    CreateComponent::Container(CreateContainer::new(vec![
+        text(
+            "## Account Linking\n\n\
                  Link your Minecraft account to get roles and a nickname in this server.\n\n\
                  Your Discord username must be set in your Hypixel social media settings.",
-            ),
-            separator(),
-            CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
-                CreateButton::new("link")
-                    .label("Link Account")
-                    .style(ButtonStyle::Primary),
-            ])),
-        ]),
-    )
+        ),
+        separator(),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+            CreateButton::new("link")
+                .label("Link Account")
+                .style(ButtonStyle::Primary),
+        ])),
+    ]))
 }
 
 pub async fn handle_cancel_button(
@@ -374,8 +377,12 @@ pub async fn handle_link_role_select(
     if let Some(rid) = role_id {
         if !can_manage_role(ctx, GuildId::new(guild_id), component.user.id, rid).await {
             return interact::send_component_error(
-                ctx, component, "You can only select roles below your highest role.",
-            ).await;
+                ctx,
+                component,
+                "Error",
+                "You can only select roles below your highest role.",
+            )
+            .await;
         }
     }
 
@@ -402,8 +409,12 @@ pub async fn handle_unlinked_role_select(
     if let Some(rid) = role_id {
         if !can_manage_role(ctx, GuildId::new(guild_id), component.user.id, rid).await {
             return interact::send_component_error(
-                ctx, component, "You can only select roles below your highest role.",
-            ).await;
+                ctx,
+                component,
+                "Error",
+                "You can only select roles below your highest role.",
+            )
+            .await;
         }
     }
 
@@ -521,7 +532,13 @@ pub async fn handle_nickname_modal(
 
     if let Some(t) = template {
         if let Err(e) = expr::validate_template(t) {
-            return interact::send_modal_error(ctx, modal, &format!("Invalid template: {e}")).await;
+            return interact::send_modal_error(
+                ctx,
+                modal,
+                "Error",
+                &format!("Invalid template: {e}"),
+            )
+            .await;
         }
     }
 
@@ -577,8 +594,12 @@ pub async fn handle_role_config_select(
 
     if !can_manage_role(ctx, GuildId::new(guild_id), component.user.id, role_id).await {
         return interact::send_component_error(
-            ctx, component, "You can only configure roles below your highest role.",
-        ).await;
+            ctx,
+            component,
+            "Error",
+            "You can only configure roles below your highest role.",
+        )
+        .await;
     }
 
     let (config, rules) = fetch_config(data, guild_id).await?;
@@ -684,14 +705,26 @@ pub async fn handle_add_rule_modal(
         .ok_or_else(|| anyhow::anyhow!("invalid compound ID"))?;
     let condition = interact::extract_modal_value(&modal.data.components, "condition");
 
-    if !can_manage_role(ctx, GuildId::new(guild_id), modal.user.id, RoleId::new(role_id)).await {
+    if !can_manage_role(
+        ctx,
+        GuildId::new(guild_id),
+        modal.user.id,
+        RoleId::new(role_id),
+    )
+    .await
+    {
         return interact::send_modal_error(
-            ctx, modal, "You can only configure roles below your highest role.",
-        ).await;
+            ctx,
+            modal,
+            "Error",
+            "You can only configure roles below your highest role.",
+        )
+        .await;
     }
 
     if let Err(e) = expr::validate_condition(&condition) {
-        return interact::send_modal_error(ctx, modal, &format!("Invalid condition: {e}")).await;
+        return interact::send_modal_error(ctx, modal, "Error", &format!("Invalid condition: {e}"))
+            .await;
     }
 
     let repo = GuildConfigRepository::new(data.db.pool());
@@ -701,6 +734,7 @@ pub async fn handle_add_rule_modal(
         return interact::send_modal_error(
             ctx,
             modal,
+            "Error",
             "A rule already exists for that role. Edit or remove it first.",
         )
         .await;
@@ -723,7 +757,8 @@ pub async fn handle_rule_edit_modal(
     let condition = interact::extract_modal_value(&modal.data.components, "condition");
 
     if let Err(e) = expr::validate_condition(&condition) {
-        return interact::send_modal_error(ctx, modal, &format!("Invalid condition: {e}")).await;
+        return interact::send_modal_error(ctx, modal, "Error", &format!("Invalid condition: {e}"))
+            .await;
     }
 
     let repo = GuildConfigRepository::new(data.db.pool());
@@ -895,7 +930,10 @@ async fn fetch_config(
     guild_id: u64,
 ) -> Result<(database::GuildConfig, Vec<GuildRoleRule>)> {
     let repo = GuildConfigRepository::new(data.db.pool());
-    let config = repo.get(guild_id as i64).await?.unwrap();
+    let config = repo
+        .get(guild_id as i64)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("guild config not found for {guild_id}"))?;
     let rules = repo.get_role_rules(guild_id as i64).await?;
     Ok((config, rules))
 }

@@ -179,16 +179,24 @@ async fn insert_minecraft_accounts(
         return Ok(());
     };
 
+    let member_uuid: Option<String> = sqlx::query_scalar("SELECT uuid FROM members WHERE id = $1")
+        .bind(member_id)
+        .fetch_optional(pool)
+        .await?;
+
     for uuid in accounts {
+        let is_primary = member_uuid.as_deref() == Some(uuid.as_str());
+
         sqlx::query(
             r#"
             INSERT INTO minecraft_accounts (member_id, uuid, is_primary)
-            VALUES ($1, $2, false)
+            VALUES ($1, $2, $3)
             ON CONFLICT (member_id, uuid) DO NOTHING
             "#,
         )
         .bind(member_id)
         .bind(uuid)
+        .bind(is_primary)
         .execute(pool)
         .await?;
     }

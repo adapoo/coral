@@ -3,13 +3,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use serenity::all::{
-    ChannelId, Command, ComponentInteraction, Context, CreateCommand, CreateInteractionResponse,
-    CreateInteractionResponseMessage, EventHandler, FullEvent, InstallationContext, Interaction,
-    InteractionContext, ModalInteraction, UserId,
+    ChannelId, Command, ComponentInteraction, Context, CreateCommand, CreateComponent,
+    CreateContainer, CreateInteractionResponse, CreateInteractionResponseMessage, EventHandler,
+    FullEvent, InstallationContext, Interaction, InteractionContext, MessageFlags,
+    ModalInteraction, UserId,
 };
 use serenity::async_trait;
 
 use clients::SkinProvider;
+use coral_redis::EventPublisher;
 use database::{Database, Member};
 
 use crate::api::CoralApiClient;
@@ -84,6 +86,8 @@ pub struct Data {
     pub mod_channel_id: Option<ChannelId>,
     pub review_forum_id: Option<ChannelId>,
     pub evidence_forum_id: Option<ChannelId>,
+    pub redis_url: String,
+    pub event_publisher: EventPublisher,
     pub bedwars_images: Arc<Mutex<HashMap<String, BedwarsCache>>>,
     pub session_images: Arc<Mutex<HashMap<String, SessionCache>>>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
@@ -319,8 +323,7 @@ impl Handler {
                     .await
             }
             _ if id.starts_with("review_remove_player:") => {
-                commands::blacklist::reviews::handle_remove_player(ctx, component, &self.data)
-                    .await
+                commands::blacklist::reviews::handle_remove_player(ctx, component, &self.data).await
             }
             _ if id.starts_with("review_remove_evidence:") => {
                 commands::blacklist::reviews::handle_remove_evidence(ctx, component, &self.data)
@@ -335,7 +338,8 @@ impl Handler {
                     .await
             }
             _ if id.starts_with("review_edit_submitted:") => {
-                commands::blacklist::reviews::handle_edit_submitted(ctx, component, &self.data).await
+                commands::blacklist::reviews::handle_edit_submitted(ctx, component, &self.data)
+                    .await
             }
             _ if id.starts_with("review_submit:") => {
                 commands::blacklist::reviews::handle_submit(ctx, component, &self.data).await
@@ -429,8 +433,7 @@ impl Handler {
                 commands::blacklist::reviews::handle_reject_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("review_edit_player_modal:") => {
-                commands::blacklist::reviews::handle_edit_player_modal(ctx, modal, &self.data)
-                    .await
+                commands::blacklist::reviews::handle_edit_player_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("setup_nickname_modal:") => {
                 commands::admin::setup::handle_nickname_modal(ctx, modal, &self.data).await
@@ -464,12 +467,19 @@ impl Handler {
         };
 
         if let Err(e) = result {
-            tracing::error!("Interaction error: {}", e);
+            tracing::error!("Interaction error: {e}");
+
+            let container = CreateComponent::Container(
+                CreateContainer::new(vec![crate::utils::text(
+                    "## Something went wrong\nAn unexpected error occurred. Please try again later.",
+                )])
+                .accent_color(crate::commands::blacklist::channel::COLOR_ERROR),
+            );
 
             let response = CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
-                    .content("An error occurred")
-                    .ephemeral(true),
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(vec![container]),
             );
 
             let _ = match interaction {
@@ -493,6 +503,8 @@ impl EventHandler for Handler {
                     Ok(cmds) => tracing::info!("Registered {} global commands", cmds.len()),
                     Err(e) => tracing::error!("Failed to register global commands: {}", e),
                 }
+
+                crate::events::spawn_subscriber(ctx.clone(), self.data.clone());
             }
             FullEvent::InteractionCreate { interaction, .. } => {
                 self.handle_interaction(ctx, interaction.clone()).await;
@@ -520,7 +532,10 @@ impl EventHandler for Handler {
                 crate::sync::handle_message_activity(ctx, &self.data, new_message);
 
                 let has_attachments = !new_message.attachments.is_empty()
-                    || new_message.message_snapshots.iter().any(|s| !s.attachments.is_empty());
+                    || new_message
+                        .message_snapshots
+                        .iter()
+                        .any(|s| !s.attachments.is_empty());
 
                 if !new_message.author.bot() && has_attachments {
                     let ctx2 = ctx.clone();

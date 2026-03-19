@@ -65,10 +65,12 @@ async fn insert_player(pool: &PgPool, player: &MongoBlacklistPlayer) -> Result<(
             .unwrap_or_else(chrono::Utc::now)
     });
 
-    let locked_by = player
-        .locked_by
-        .as_ref()
-        .and_then(|s| s.parse::<i64>().ok());
+    let locked_by = player.locked_by.as_ref().and_then(|s| {
+        s.parse::<i64>().ok().or_else(|| {
+            warn!("Invalid locked_by value '{}' for player {}", s, player.uuid);
+            None
+        })
+    });
 
     sqlx::query(
         r#"

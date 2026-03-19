@@ -1,8 +1,5 @@
-use std::time::Instant;
-
 use image::{DynamicImage, RgbaImage};
 use mctext::{MCText, NamedColor};
-use tracing::info;
 
 use hypixel::{
     BedwarsPlayerStats, Mode, ModeStats, SlumberInfo, StreakSource, WinstreakHistory, color_code,
@@ -15,8 +12,8 @@ use crate::canvas::{
 };
 
 use super::common::{
-    BAR_COLOR, color_name_to_named, colors, draw_progress_bar, format_number,
-    format_percent, format_ratio, format_timestamp,
+    BAR_COLOR, color_name_to_named, colors, draw_progress_bar, format_number, format_percent,
+    format_ratio, format_timestamp,
 };
 use super::prestiges::{build_prestige_text, prestige_colors, prestige_star};
 use super::session::{ModeGames, VerticalGamesBox};
@@ -64,32 +61,20 @@ pub fn render_bedwars(
         four_v_four: stats.four_v_four.wins + stats.four_v_four.losses,
     };
 
-    let t0 = Instant::now();
-    let canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT).background(CANVAS_BACKGROUND);
-    let t_init = t0.elapsed();
-
-    let t0 = Instant::now();
-    let canvas = canvas.draw(0, HEADER_Y as i32, &HeaderSection::new(stats, tags));
-    let t_header = t0.elapsed();
-
-    let t0 = Instant::now();
-    let canvas = canvas.draw(0, LEVEL_Y as i32, &LevelSection::new(stats));
-    let t_level = t0.elapsed();
-
-    let t0 = Instant::now();
-    let canvas = canvas.draw(
-        col_x(0) as i32,
-        MAIN_ROW_Y as i32,
-        &SkinSection::new(skin, mode, stats.network_level),
-    );
-    let t_skin = t0.elapsed();
-
-    let t0 = Instant::now();
-    let canvas = canvas.draw(
-        col_x(1) as i32,
-        MAIN_ROW_Y as i32,
-        &StatsSection::new(&mode_stats),
-    );
+    let canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT)
+        .background(CANVAS_BACKGROUND)
+        .draw(0, HEADER_Y as i32, &HeaderSection::new(stats, tags))
+        .draw(0, LEVEL_Y as i32, &LevelSection::new(stats))
+        .draw(
+            col_x(0) as i32,
+            MAIN_ROW_Y as i32,
+            &SkinSection::new(skin, mode, stats.network_level),
+        )
+        .draw(
+            col_x(1) as i32,
+            MAIN_ROW_Y as i32,
+            &StatsSection::new(&mode_stats),
+        );
 
     let canvas = match mode {
         Mode::Overall => canvas.draw(
@@ -104,7 +89,8 @@ pub fn render_bedwars(
         ),
     };
 
-    let canvas = canvas.draw(
+    let canvas = canvas
+        .draw(
             col_x(2) as i32,
             SECOND_ROW_Y as i32,
             &WinstreaksBox {
@@ -119,18 +105,8 @@ pub fn render_bedwars(
             BOTTOM_ROW_Y as i32,
             &slumber_box(&stats.slumber),
         );
-    let t_boxes = t0.elapsed();
 
-    let t0 = Instant::now();
-    let result = canvas.build();
-    let t_build = t0.elapsed();
-
-    info!(
-        "render breakdown: init={:?} header={:?} level={:?} skin={:?} boxes={:?} build={:?}",
-        t_init, t_header, t_level, t_skin, t_boxes, t_build
-    );
-
-    result
+    canvas.build()
 }
 
 const STATS_BOX_WIDTH: u32 = 528;
@@ -306,9 +282,15 @@ impl Shape for ModeShareBox<'_> {
 
         let rows: [(&str, f64); 4] = [
             ("Wins", Self::pct(self.mode.wins, self.overall.wins)),
-            ("Finals", Self::pct(self.mode.final_kills, self.overall.final_kills)),
+            (
+                "Finals",
+                Self::pct(self.mode.final_kills, self.overall.final_kills),
+            ),
             ("Kills", Self::pct(self.mode.kills, self.overall.kills)),
-            ("Beds", Self::pct(self.mode.beds_broken, self.overall.beds_broken)),
+            (
+                "Beds",
+                Self::pct(self.mode.beds_broken, self.overall.beds_broken),
+            ),
         ];
 
         let bar_width = COL_WIDTH - padding * 2;
@@ -322,8 +304,7 @@ impl Shape for ModeShareBox<'_> {
             let filled_w = (pct / 100.0 * bar_width as f64).round() as u32;
             if filled_w > 0 {
                 draw_progress_bar(
-                    ctx, bx, by, filled_w, bar_height, 0,
-                    1.0, BAR_COLOR, BAR_COLOR,
+                    ctx, bx, by, filled_w, bar_height, 0, 1.0, BAR_COLOR, BAR_COLOR,
                 );
             }
 
@@ -338,9 +319,14 @@ impl Shape for ModeShareBox<'_> {
             let ty = by as f32 + (bar_height as f32 - th) / 2.0;
 
             ctx.renderer.draw(
-                ctx.buffer.as_mut(), cw, ch,
-                ctx.x as f32 + tx, ctx.y as f32 + ty,
-                &text, text_font, true,
+                ctx.buffer.as_mut(),
+                cw,
+                ch,
+                ctx.x as f32 + tx,
+                ctx.y as f32 + ty,
+                &text,
+                text_font,
+                true,
             );
         }
     }
@@ -880,9 +866,7 @@ impl Shape for SkinSection<'_> {
             let skin_y = level_bottom + (available_h - new_h) / 2 + 12;
 
             let mut skin_ctx = ctx.at(skin_x as i32, skin_y as i32);
-            Image::new(skin)
-                .size(new_w, new_h)
-                .draw(&mut skin_ctx);
+            Image::new(skin).size(new_w, new_h).draw(&mut skin_ctx);
         }
     }
 

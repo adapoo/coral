@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use anyhow::Result;
-use chrono::{Datelike, DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use hypixel::parsing::bedwars::{GuildInfo, Stats};
 use hypixel::{Mode, experience_for_level, extract_bedwars_stats};
 use image::DynamicImage;
@@ -12,13 +12,14 @@ use serenity::all::{
     CreateComponent, CreateContainer, CreateContainerComponent, CreateInputText,
     CreateInteractionResponse, CreateInteractionResponseMessage, CreateLabel, CreateMediaGallery,
     CreateMediaGalleryItem, CreateModal, CreateModalComponent, CreateSelectMenu,
-    CreateSelectMenuKind, CreateSelectMenuOption, CreateUnfurledMediaItem,
-    EditInteractionResponse, EditMessage, InputTextStyle, LabelComponent, MessageFlags,
-    ModalInteraction,
+    CreateSelectMenuKind, CreateSelectMenuOption, CreateUnfurledMediaItem, EditInteractionResponse,
+    EditMessage, InputTextStyle, LabelComponent, MessageFlags, ModalInteraction,
 };
-use tracing::info;
+use tracing::debug;
 
-use database::{AccountRepository, CacheRepository, MemberRepository, SessionMarker, SessionRepository};
+use database::{
+    AccountRepository, CacheRepository, MemberRepository, SessionMarker, SessionRepository,
+};
 use render::TagIcon;
 
 use crate::framework::Data;
@@ -124,7 +125,12 @@ impl Period {
     }
 }
 
-const PERIODS: [Period; 4] = [Period::Daily, Period::Weekly, Period::Monthly, Period::Yearly];
+const PERIODS: [Period; 4] = [
+    Period::Daily,
+    Period::Weekly,
+    Period::Monthly,
+    Period::Yearly,
+];
 
 enum SessionError {
     PlayerNotFound,
@@ -144,9 +150,9 @@ enum ModeOwnership {
 }
 
 fn image_gallery() -> CreateComponent<'static> {
-    CreateComponent::MediaGallery(CreateMediaGallery::new(vec![
-        CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new("attachment://session.png")),
-    ]))
+    CreateComponent::MediaGallery(CreateMediaGallery::new(vec![CreateMediaGalleryItem::new(
+        CreateUnfurledMediaItem::new("attachment://session.png"),
+    )]))
 }
 
 fn sanitize(name: &str) -> String {
@@ -342,9 +348,12 @@ fn build_session_components(
     auto_presets: &[AutoPreset],
     is_owner: bool,
 ) -> Vec<CreateComponent<'static>> {
-    let mode_row = CreateComponent::ActionRow(CreateActionRow::SelectMenu(
-        create_mode_dropdown("session_mode", cache_key, mode, stats),
-    ));
+    let mode_row = CreateComponent::ActionRow(CreateActionRow::SelectMenu(create_mode_dropdown(
+        "session_mode",
+        cache_key,
+        mode,
+        stats,
+    )));
 
     let mut container_rows = vec![CreateContainerComponent::ActionRow(
         CreateActionRow::SelectMenu(create_session_dropdown(
@@ -458,11 +467,8 @@ fn create_session_dropdown(
 
     if is_owner {
         options.push(
-            CreateSelectMenuOption::new(
-                "Create New Bookmark",
-                format!("create:{cache_key}"),
-            )
-            .description("Bookmark your current stats"),
+            CreateSelectMenuOption::new("Create New Bookmark", format!("create:{cache_key}"))
+                .description("Bookmark your current stats"),
         );
     }
 
@@ -496,13 +502,11 @@ fn create_session_dropdown(
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("session")
         .description("View your session stats over time")
-        .add_option(
-            CreateCommandOption::new(
-                CommandOptionType::String,
-                "player",
-                "Minecraft username or UUID",
-            ),
-        )
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::String,
+            "player",
+            "Minecraft username or UUID",
+        ))
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
@@ -671,8 +675,7 @@ pub async fn handle_switch(
         _ => selection.to_string(),
     };
 
-    let result =
-        resolve_view_switch(data, cache_key, &image_key, component.user.id.get());
+    let result = resolve_view_switch(data, cache_key, &image_key, component.user.id.get());
 
     match result {
         SwitchResult::Ok(png, components) => {
@@ -758,7 +761,10 @@ async fn handle_create_bookmark(
         let Some(entry) = cache.get(cache_key) else {
             return Ok(());
         };
-        (entry.uuid.clone(), entry.sender_id == component.user.id.get())
+        (
+            entry.uuid.clone(),
+            entry.sender_id == component.user.id.get(),
+        )
     };
 
     let is_owner = AccountRepository::new(data.db.pool())
@@ -789,7 +795,11 @@ async fn handle_create_bookmark(
     }
 
     let cache_repo = CacheRepository::new(data.db.pool());
-    let snapshot_data = cache_repo.get_snapshot_at(&uuid, timestamp).await.ok().flatten();
+    let snapshot_data = cache_repo
+        .get_snapshot_at(&uuid, timestamp)
+        .await
+        .ok()
+        .flatten();
 
     let (components, png, ephemeral_png) = {
         let mut cache = data.session_images.lock().unwrap();
@@ -1012,10 +1022,10 @@ pub async fn handle_rename_modal(
             entry.descriptions.insert(new_key.clone(), desc);
         }
         if let Some(ps) = entry.render_data.previous_stats.remove(&old_key) {
-            entry
-                .render_data
-                .previous_stats
-                .insert(new_key.clone(), (ps.0, SessionType::Custom(new_name.to_string()), ps.2));
+            entry.render_data.previous_stats.insert(
+                new_key.clone(),
+                (ps.0, SessionType::Custom(new_name.to_string()), ps.2),
+            );
         }
         if is_sender && entry.current_view == old_key {
             entry.current_view = new_key;
@@ -1210,12 +1220,7 @@ fn resolve_view_switch(
     SwitchResult::Ok(png, components)
 }
 
-fn check_mode_sender(
-    data: &Data,
-    cache_key: &str,
-    mode: Mode,
-    user_id: u64,
-) -> ModeOwnership {
+fn check_mode_sender(data: &Data, cache_key: &str, mode: Mode, user_id: u64) -> ModeOwnership {
     let store = data.session_images.lock().unwrap();
 
     let Some(entry) = store.get(cache_key) else {
@@ -1227,10 +1232,7 @@ fn check_mode_sender(
     }
 
     if entry.sender_id != user_id {
-        let prev = entry
-            .render_data
-            .previous_stats
-            .get(&entry.current_view);
+        let prev = entry.render_data.previous_stats.get(&entry.current_view);
         if let Some((prev_stats, session_type, started)) = prev {
             let image = render_session(
                 &entry.render_data.current_stats,
@@ -1328,11 +1330,11 @@ async fn precompute_session(
     let t = Instant::now();
 
     let cached_uuid = resolve_uuid(data, player).await;
-    info!(at = ?t.elapsed(), cached = cached_uuid.is_some(), "session resolve");
+    debug!(at = ?t.elapsed(), cached = cached_uuid.is_some(), "session resolve");
 
     let (resp, guild_result, skin_result) =
         fetch_player(data, player, cached_uuid.as_deref()).await?;
-    info!(at = ?t.elapsed(), "session api done");
+    debug!(at = ?t.elapsed(), "session api done");
 
     let hypixel_data = resp.hypixel.ok_or(SessionError::PlayerNotFound)?;
     let username = resp.username.clone();
@@ -1349,7 +1351,7 @@ async fn precompute_session(
 
     let (snapshots, markers, auto_presets) =
         fetch_snapshots(data, &uuid, discord_id, current_stats.level as u64).await;
-    info!(at = ?t.elapsed(), "session snapshots done");
+    debug!(at = ?t.elapsed(), "session snapshots done");
 
     let to_stats = |v: Option<serde_json::Value>| -> Option<Stats> {
         extract_bedwars_stats(&username, &v?, guild_info.clone())
@@ -1365,7 +1367,7 @@ async fn precompute_session(
         &extract_tag_icons(&resp.tags),
         to_stats,
     );
-    info!(at = ?t.elapsed(), "session render done");
+    debug!(at = ?t.elapsed(), "session render done");
 
     Ok(SessionCache {
         uuid,
@@ -1451,18 +1453,25 @@ async fn fetch_snapshots(
     let now = Utc::now();
 
     let (mut markers, auto_presets) = tokio::join!(
-        async { session_repo.list(uuid, discord_id).await.unwrap_or_default() },
+        async {
+            session_repo
+                .list(uuid, discord_id)
+                .await
+                .unwrap_or_default()
+        },
         detect_auto_presets(&cache_repo, uuid, current_level),
     );
 
     if markers.is_empty() {
-        if let Ok(marker) = session_repo.create(uuid, discord_id, "main", now, true).await {
+        if let Ok(marker) = session_repo
+            .create(uuid, discord_id, "main", now, true)
+            .await
+        {
             markers.push(marker);
         }
     }
 
-    let mut timestamps: Vec<DateTime<Utc>> =
-        PERIODS.iter().map(|p| last_reset(*p, now)).collect();
+    let mut timestamps: Vec<DateTime<Utc>> = PERIODS.iter().map(|p| last_reset(*p, now)).collect();
     for period in PERIODS {
         if period.fixed_preset().is_some() {
             timestamps.push(now - period.duration());
@@ -1570,10 +1579,7 @@ fn render_all_views(
                 images.insert(fp_key.to_string(), png);
             }
 
-            previous_stats.insert(
-                fp_key.to_string(),
-                (prev_stats, fp_type, target_time),
-            );
+            previous_stats.insert(fp_key.to_string(), (prev_stats, fp_type, target_time));
         }
     }
 
@@ -1636,10 +1642,7 @@ fn render_all_views(
                 images.insert(key.clone(), png);
             }
 
-            previous_stats.insert(
-                key,
-                (prev_stats.clone(), session_type, preset.timestamp),
-            );
+            previous_stats.insert(key, (prev_stats.clone(), session_type, preset.timestamp));
         }
     }
 
@@ -1661,7 +1664,10 @@ async fn detect_auto_presets(
             let bw = v.get("stats")?.get("Bedwars")?;
             Some(SnapshotFields {
                 experience: bw.get("Experience").and_then(|e| e.as_u64()).unwrap_or(0),
-                losses: bw.get("losses_bedwars").and_then(|e| e.as_u64()).unwrap_or(0),
+                losses: bw
+                    .get("losses_bedwars")
+                    .and_then(|e| e.as_u64())
+                    .unwrap_or(0),
             })
         })
         .await

@@ -1,0 +1,104 @@
+use futures_util::StreamExt;
+use redis::AsyncCommands;
+use serde::{Deserialize, Serialize};
+
+use crate::RedisPool;
+
+const CHANNEL: &str = "blacklist:events";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum BlacklistEvent {
+    TagAdded {
+        uuid: String,
+        tag_id: i64,
+        added_by: i64,
+    },
+    TagOverwritten {
+        uuid: String,
+        old_tag_id: i64,
+        old_tag_type: String,
+        old_reason: String,
+        new_tag_id: i64,
+        overwritten_by: i64,
+    },
+    TagRemoved {
+        uuid: String,
+        tag_id: i64,
+        removed_by: i64,
+    },
+    TagEdited {
+        uuid: String,
+        tag_id: i64,
+        old_tag_type: String,
+        old_reason: String,
+        edited_by: i64,
+    },
+    PlayerLocked {
+        uuid: String,
+        locked_by: i64,
+        reason: String,
+    },
+    PlayerUnlocked {
+        uuid: String,
+        unlocked_by: i64,
+    },
+}
+
+#[derive(Clone)]
+pub struct EventPublisher {
+    pool: RedisPool,
+}
+
+impl EventPublisher {
+    pub fn new(pool: RedisPool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn publish(&self, event: &BlacklistEvent) {
+        let payload = match serde_json::to_string(event) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("Failed to serialize blacklist event: {e}");
+                return;
+            }
+        };
+
+        let mut conn = self.pool.connection();
+        if let Err(e) = conn.publish::<_, _, ()>(CHANNEL, &payload).await {
+            tracing::error!("Failed to publish blacklist event: {e}");
+        }
+    }
+}
+
+pub struct EventSubscriber;
+
+impl EventSubscriber {
+    pub async fn run<F, Fut>(redis_url: &str, handler: F) -> Result<(), redis::RedisError>
+    where
+        F: Fn(BlacklistEvent) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let client = redis::Client::open(redis_url)?;
+        let mut pubsub = client.get_async_pubsub().await?;
+        pubsub.subscribe(CHANNEL).await?;
+
+        let mut stream = pubsub.into_on_message();
+        while let Some(msg) = stream.next().await {
+            let payload: String = match msg.get_payload() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!("Failed to read event payload: {e}");
+                    continue;
+                }
+            };
+
+            match serde_json::from_str::<BlacklistEvent>(&payload) {
+                Ok(event) => handler(event).await,
+                Err(e) => tracing::error!("Failed to deserialize event: {e}"),
+            }
+        }
+
+        Ok(())
+    }
+}

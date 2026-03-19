@@ -6,8 +6,9 @@ use serde::Deserialize;
 use clients::normalize_uuid;
 use database::{BlacklistRepository, Member, MemberRepository, PlayerTagRow};
 
+use coral_redis::RateLimitResult;
+
 use crate::cache::refresh_player_cache;
-use crate::middleware::RateLimiter;
 use crate::responses::{CubelifyResponse, CubelifyScore, CubelifyTag};
 use crate::state::AppState;
 
@@ -72,21 +73,23 @@ async fn check_rate_limit(
     api_key: &str,
     member: &Member,
 ) -> Result<(), CubelifyResponse> {
-    let limiter = RateLimiter::new(state.db.pool());
+    let limit = match member.access_level {
+        4.. => 3000,
+        2..=3 => 1200,
+        _ => 600,
+    };
 
-    let allowed = limiter
-        .check_and_increment(api_key, member.access_level)
-        .await
-        .map_err(|_| CubelifyResponse::error("Internal Error", "mdi-alert-circle"))?;
-
-    if !allowed {
-        return Err(CubelifyResponse::error(
+    match state.rate_limiter.check_and_record(api_key, limit).await {
+        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
+        Ok(RateLimitResult::Exceeded) => Err(CubelifyResponse::error(
             "Rate limit exceeded",
             "mdi-speedometer",
-        ));
+        )),
+        Err(_) => Err(CubelifyResponse::error(
+            "Internal Error",
+            "mdi-alert-circle",
+        )),
     }
-
-    Ok(())
 }
 
 async fn fetch_player_tags(

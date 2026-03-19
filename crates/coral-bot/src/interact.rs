@@ -2,12 +2,11 @@ use anyhow::Result;
 use serenity::all::{
     CommandInteraction, Component, ComponentInteraction, Context, CreateComponent, CreateContainer,
     CreateInteractionResponse, CreateInteractionResponseMessage, CreateSectionComponent,
-    CreateTextDisplay, LabelComponent, MessageFlags, ModalInteraction,
+    CreateTextDisplay, EditInteractionResponse, LabelComponent, MessageFlags, ModalInteraction,
 };
 
+use crate::commands::blacklist::channel::COLOR_ERROR;
 use crate::utils::text;
-
-const COLOR_ERROR: u32 = 0xED4245;
 
 pub fn section_text(s: &str) -> CreateSectionComponent<'static> {
     CreateSectionComponent::TextDisplay(CreateTextDisplay::new(s.to_string()))
@@ -88,19 +87,33 @@ pub async fn update_modal(
     Ok(())
 }
 
-pub async fn send_error(ctx: &Context, command: &CommandInteraction, message: &str) -> Result<()> {
-    let container = CreateComponent::Container(
-        CreateContainer::new(vec![text(format!("## Error\n{message}"))]).accent_color(COLOR_ERROR),
-    );
-
+pub async fn send_error(
+    ctx: &Context,
+    command: &CommandInteraction,
+    title: &str,
+    description: &str,
+) -> Result<()> {
     command
         .create_response(
             &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(vec![container]),
-            ),
+            CreateInteractionResponse::Message(error_response(title, description)),
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn send_deferred_error(
+    ctx: &Context,
+    command: &CommandInteraction,
+    title: &str,
+    description: &str,
+) -> Result<()> {
+    command
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(vec![error_container(title, description)]),
         )
         .await?;
     Ok(())
@@ -109,20 +122,13 @@ pub async fn send_error(ctx: &Context, command: &CommandInteraction, message: &s
 pub async fn send_component_error(
     ctx: &Context,
     component: &ComponentInteraction,
-    message: &str,
+    title: &str,
+    description: &str,
 ) -> Result<()> {
-    let container = CreateComponent::Container(
-        CreateContainer::new(vec![text(format!("## Error\n{message}"))]).accent_color(COLOR_ERROR),
-    );
-
     component
         .create_response(
             &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(vec![container]),
-            ),
+            CreateInteractionResponse::Message(error_response(title, description)),
         )
         .await?;
     Ok(())
@@ -131,17 +137,30 @@ pub async fn send_component_error(
 pub async fn send_modal_error(
     ctx: &Context,
     modal: &ModalInteraction,
-    message: &str,
+    title: &str,
+    description: &str,
 ) -> Result<()> {
     modal
         .create_response(
             &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .content(message)
-                    .ephemeral(true),
-            ),
+            CreateInteractionResponse::Message(error_response(title, description)),
         )
         .await?;
     Ok(())
+}
+
+fn error_container(title: &str, description: &str) -> CreateComponent<'static> {
+    let body = if description.is_empty() {
+        format!("## {title}")
+    } else {
+        format!("## {title}\n{description}")
+    };
+
+    CreateComponent::Container(CreateContainer::new(vec![text(body)]).accent_color(COLOR_ERROR))
+}
+
+fn error_response(title: &str, description: &str) -> CreateInteractionResponseMessage<'static> {
+    CreateInteractionResponseMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+        .components(vec![error_container(title, description)])
 }

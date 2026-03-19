@@ -29,6 +29,7 @@ pub struct TagInfo {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct GuildResponse {
     pub name: String,
     pub tag: Option<String>,

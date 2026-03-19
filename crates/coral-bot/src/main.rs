@@ -7,11 +7,13 @@ use serenity::all::{ChannelId, Client, GatewayIntents, Token};
 use tracing_subscriber::EnvFilter;
 
 use clients::{LocalSkinProvider, SkinProvider};
+use coral_redis::{EventPublisher, RedisPool};
 use database::Database;
 
 mod accounts;
 mod api;
 mod commands;
+mod events;
 mod expr;
 mod framework;
 mod interact;
@@ -37,8 +39,9 @@ async fn main() -> Result<()> {
 
 fn init_logging() {
     dotenvy::dotenv().ok();
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,wgpu_core=warn,wgpu_hal=warn,naga=warn"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("info,wgpu_core=error,wgpu_hal=error,naga=error,serenity=warn")
+    });
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
@@ -46,6 +49,7 @@ async fn init_data() -> Result<Data> {
     render::init_canvas();
 
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL required");
+    let redis_url = env::var("REDIS_URL").expect("REDIS_URL required");
     let api_url = env::var("CORAL_API_URL").unwrap_or_else(|_| "http://localhost:8000".into());
     let api_key = env::var("INTERNAL_API_KEY").expect("INTERNAL_API_KEY required");
     let owner_ids = parse_owner_ids();
@@ -53,6 +57,8 @@ async fn init_data() -> Result<Data> {
     let mod_channel_id = parse_channel_id("MOD_CHANNEL_ID");
 
     let db = Database::connect(&database_url).await?;
+    let redis = RedisPool::connect(&redis_url).await?;
+    let event_publisher = EventPublisher::new(redis);
     let api = CoralApiClient::new(api_url, api_key);
     let skin_provider: Arc<dyn SkinProvider> =
         Arc::new(LocalSkinProvider::new().expect("Failed to initialize skin renderer"));
@@ -66,6 +72,8 @@ async fn init_data() -> Result<Data> {
         mod_channel_id,
         review_forum_id: parse_channel_id("REVIEW_FORUM_ID"),
         evidence_forum_id: parse_channel_id("EVIDENCE_FORUM_ID"),
+        redis_url,
+        event_publisher,
         bedwars_images: Arc::new(Mutex::new(HashMap::new())),
         session_images: Arc::new(Mutex::new(HashMap::new())),
         pending_overwrites: Arc::new(Mutex::new(HashMap::new())),
@@ -75,13 +83,11 @@ async fn init_data() -> Result<Data> {
 }
 
 fn parse_owner_ids() -> Vec<u64> {
-    let ids: Vec<u64> = env::var("OWNER_IDS")
+    env::var("OWNER_IDS")
         .unwrap_or_default()
         .split(',')
         .filter_map(|s| s.trim().parse::<u64>().ok())
-        .collect();
-    tracing::info!("Loaded {} owner IDs: {:?}", ids.len(), ids);
-    ids
+        .collect()
 }
 
 fn parse_channel_id(name: &str) -> Option<ChannelId> {

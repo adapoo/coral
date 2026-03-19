@@ -8,8 +8,7 @@ use serenity::all::{
 use database::MemberRepository;
 
 use crate::framework::Data;
-
-const COLOR_ERROR: u32 = 0xED4245;
+use crate::interact;
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("unregister").description("Unlink your Minecraft account from Discord")
@@ -22,19 +21,21 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     let member = repo.get_by_discord_id(discord_id).await?;
 
     let Some(member) = member else {
-        return send_error(
+        return interact::send_error(
             ctx,
             command,
-            "## Not Registered\nYou don't have a linked Minecraft account.",
+            "Not Registered",
+            "You don't have a linked Minecraft account.",
         )
         .await;
     };
 
     let Some(uuid) = &member.uuid else {
-        return send_error(
+        return interact::send_error(
             ctx,
             command,
-            "## Not Linked\nYou don't have a Minecraft account linked.",
+            "Not Linked",
+            "You don't have a Minecraft account linked.",
         )
         .await;
     };
@@ -48,39 +49,11 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     repo.clear_uuid(discord_id).await?;
 
-    let container = CreateComponent::Container(
-        CreateContainer::new(vec![CreateContainerComponent::TextDisplay(
-            CreateTextDisplay::new(format!(
-                "## Account Unlinked\n**{username}** has been unlinked.\n\nUse `/register` to link a new account."
-            )),
-        )]),
-    );
-
-    command
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(vec![container]),
-            ),
-        )
-        .await?;
-
-    Ok(())
-}
-
-async fn send_error(
-    ctx: &Context,
-    command: &CommandInteraction,
-    text: &str,
-) -> Result<()> {
-    let container = CreateComponent::Container(
-        CreateContainer::new(vec![CreateContainerComponent::TextDisplay(
-            CreateTextDisplay::new(text.to_string()),
-        )])
-        .accent_color(COLOR_ERROR),
-    );
+    let container = CreateComponent::Container(CreateContainer::new(vec![
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## Account Unlinked\n**{username}** has been unlinked.\n\nUse `/register` to link a new account."
+        ))),
+    ]));
 
     command
         .create_response(

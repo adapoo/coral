@@ -12,9 +12,9 @@ use serenity::all::{
     ModalInteraction, ThreadId,
 };
 
-use super::channel::post_new_tag;
 use crate::framework::Data;
 use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text};
+use coral_redis::BlacklistEvent;
 
 const TAG_PENDING: &str = "Pending";
 const TAG_APPROVED: &str = "Approved";
@@ -52,7 +52,6 @@ enum Evidence {
         note: Option<String>,
     },
     Attachment {
-        filename: String,
         url: String,
     },
 }
@@ -69,9 +68,7 @@ const REVIEW_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
 const SUBMISSION_TIMEOUT_SECS: u64 = 30 * 60;
 const SUBMISSION_WARNING_SECS: u64 = 20 * 60;
 
-fn build_tag_select_options(
-    selected: Option<&str>,
-) -> Vec<CreateSelectMenuOption<'static>> {
+fn build_tag_select_options(selected: Option<&str>) -> Vec<CreateSelectMenuOption<'static>> {
     blacklist::all()
         .iter()
         .filter(|def| REVIEW_TAGS.contains(&def.name))
@@ -182,13 +179,7 @@ fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| item.media.url.to_string());
                     if let Some(player) = players.last_mut() {
-                        let filename = url
-                            .rsplit('/')
-                            .next()
-                            .and_then(|s| s.split('?').next())
-                            .unwrap_or("media")
-                            .to_string();
-                        player.evidence.push(Evidence::Attachment { filename, url });
+                        player.evidence.push(Evidence::Attachment { url });
                     }
                 }
             }
@@ -196,9 +187,9 @@ fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
         }
     }
 
-    let submitted = texts
-        .iter()
-        .any(|t| t.contains("Approved by") || t.contains("Rejected by") || t.contains("awaiting review"));
+    let submitted = texts.iter().any(|t| {
+        t.contains("Approved by") || t.contains("Rejected by") || t.contains("awaiting review")
+    });
 
     Some(SubmissionState {
         submitter_id,
@@ -275,9 +266,7 @@ fn parse_player_block(content: &str) -> Option<PlayerEntry> {
     })
 }
 
-fn parse_status_line(
-    text: &str,
-) -> Option<(PlayerStatus, Option<String>, Option<String>)> {
+fn parse_status_line(text: &str) -> Option<(PlayerStatus, Option<String>, Option<String>)> {
     let line = text.strip_prefix("-# ")?;
 
     if line.contains("Pending") {
@@ -440,9 +429,11 @@ fn build_review_message(state: &SubmissionState) -> Vec<CreateComponent<'static>
         if has_pending {
             parts.push(CreateContainerComponent::ActionRow(
                 CreateActionRow::Buttons(
-                    vec![CreateButton::new(format!("review_edit_submitted:{id}"))
-                        .label("Edit")
-                        .style(ButtonStyle::Secondary)]
+                    vec![
+                        CreateButton::new(format!("review_edit_submitted:{id}"))
+                            .label("Edit")
+                            .style(ButtonStyle::Secondary),
+                    ]
                     .into(),
                 ),
             ));
@@ -610,7 +601,11 @@ fn build_vote_message(
     let display_name = def.map(|d| d.display_name).unwrap_or(tag_type);
 
     let has_disagreement = accept_count > 0 && reject_count > 0;
-    let total = if vote_type == "accept" { accept_count } else { reject_count };
+    let total = if vote_type == "accept" {
+        accept_count
+    } else {
+        reject_count
+    };
 
     let mut content = format!(
         "<@{voter_id}> voted to **{vote_type}** the {emote} **{display_name}** tag on `{username}`. [{total}/3]"
@@ -1018,7 +1013,11 @@ pub async fn handle_player_modal(
 
     let new_player = PlayerEntry {
         username: resolved_name,
-        uuid: if is_nicked { String::new() } else { resolved_uuid.clone() },
+        uuid: if is_nicked {
+            String::new()
+        } else {
+            resolved_uuid.clone()
+        },
         tag_type,
         reason,
         is_nicked,
@@ -1214,9 +1213,11 @@ pub async fn handle_add_attachment(
         )),
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
             vec![
-                CreateButton::new(format!("review_cancel_attachment:{player_idx}:{submitter_id}"))
-                    .label("Cancel")
-                    .style(ButtonStyle::Secondary),
+                CreateButton::new(format!(
+                    "review_cancel_attachment:{player_idx}:{submitter_id}"
+                ))
+                .label("Cancel")
+                .style(ButtonStyle::Secondary),
             ]
             .into(),
         )),
@@ -1354,11 +1355,9 @@ pub async fn handle_attachment_message(
     for (i, (url, orig_filename)) in attachments.iter().take(remaining).enumerate() {
         let ext = orig_filename.rsplit('.').next().unwrap_or("png");
         let filename = format!("{}_{}.{}", player.username, existing_count + i + 1, ext);
-        let att =
-            CreateAttachment::url(&ctx.http, url.as_str(), filename.clone()).await?;
+        let att = CreateAttachment::url(&ctx.http, url.as_str(), filename.clone()).await?;
         files.push(att);
         player.evidence.push(Evidence::Attachment {
-            filename: filename.clone(),
             url: format!("attachment://{filename}"),
         });
     }
@@ -1738,8 +1737,12 @@ pub async fn handle_approve(
     let discord_id = component.user.id.get();
     let rank = super::tag::get_rank(data, discord_id).await?;
     if rank < crate::framework::AccessRank::Member {
-        return send_vote_error(ctx, component, "Only members and above can review submissions")
-            .await;
+        return send_vote_error(
+            ctx,
+            component,
+            "Only members and above can review submissions",
+        )
+        .await;
     }
 
     if discord_id == submitter_id {
@@ -1884,6 +1887,7 @@ pub async fn handle_approve(
                 tag_id,
                 &media_urls,
                 Some(&review_thread_url),
+                discord_id as i64,
             )
             .await
             {
@@ -1892,8 +1896,13 @@ pub async fn handle_approve(
         }
 
         let tags = repo.get_tags(&player_uuid).await?;
-        if let Some(new_tag) = tags.iter().find(|t| t.id == tag_id) {
-            post_new_tag(ctx, data, &player_uuid, &player_username, new_tag).await;
+        if let Some(_new_tag) = tags.iter().find(|t| t.id == tag_id) {
+            let event = BlacklistEvent::TagAdded {
+                uuid: player_uuid.clone(),
+                tag_id,
+                added_by: submitter_id as i64,
+            };
+            data.event_publisher.publish(&event).await;
         }
     }
 
@@ -1939,10 +1948,21 @@ pub async fn handle_approve(
 
     let channel_id = component.channel_id;
     if is_staff {
-        let staff_msg = build_vote_message(discord_id, "accept", &player_tag_type, &player_username, 1, 0);
+        let staff_msg = build_vote_message(
+            discord_id,
+            "accept",
+            &player_tag_type,
+            &player_username,
+            1,
+            0,
+        );
         let _ = ctx
             .http
-            .send_message(channel_id.into(), Vec::<CreateAttachment>::new(), &staff_msg)
+            .send_message(
+                channel_id.into(),
+                Vec::<CreateAttachment>::new(),
+                &staff_msg,
+            )
             .await;
     } else {
         let _ = ctx
@@ -1977,8 +1997,12 @@ pub async fn handle_reject(
     let discord_id = component.user.id.get();
     let rank = super::tag::get_rank(data, discord_id).await?;
     if rank < crate::framework::AccessRank::Member {
-        return send_vote_error(ctx, component, "Only members and above can review submissions")
-            .await;
+        return send_vote_error(
+            ctx,
+            component,
+            "Only members and above can review submissions",
+        )
+        .await;
     }
 
     if discord_id == submitter_id {
@@ -2453,11 +2477,9 @@ pub async fn handle_confirm(
                     CreateInteractionResponse::UpdateMessage(
                         CreateInteractionResponseMessage::new()
                             .flags(MessageFlags::IS_COMPONENTS_V2)
-                            .components(vec![CreateComponent::Container(
-                                CreateContainer::new(vec![text(
-                                    "## Error\nFailed to create review submission",
-                                )]),
-                            )]),
+                            .components(vec![CreateComponent::Container(CreateContainer::new(
+                                vec![text("## Error\nFailed to create review submission")],
+                            ))]),
                     ),
                 )
                 .await?;
@@ -2521,9 +2543,11 @@ pub async fn handle_cancel_thread(
     let delete_msg = CreateMessage::new()
         .content("Deleting post in 30 seconds.")
         .components(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
-            vec![CreateButton::new(format!("review_abort_delete:{submitter_id}"))
-                .label("Cancel")
-                .style(ButtonStyle::Secondary)]
+            vec![
+                CreateButton::new(format!("review_abort_delete:{submitter_id}"))
+                    .label("Cancel")
+                    .style(ButtonStyle::Secondary),
+            ]
             .into(),
         ))]);
 

@@ -324,10 +324,7 @@ impl<'a> BlacklistRepository<'a> {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn convert_tag_to_confirmed(
-        &self,
-        tag_id: i64,
-    ) -> Result<bool, sqlx::Error> {
+    pub async fn convert_tag_to_confirmed(&self, tag_id: i64) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
             r#"
             UPDATE player_tags

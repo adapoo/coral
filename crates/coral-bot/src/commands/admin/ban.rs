@@ -8,9 +8,9 @@ use database::MemberRepository;
 
 use crate::commands::blacklist::channel;
 use crate::framework::{AccessRank, Data};
+use crate::interact;
 
 const COLOR_SUCCESS: u32 = 0x00FF00;
-const COLOR_ERROR: u32 = 0xFF5555;
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("ban")
@@ -32,9 +32,10 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     let rank = AccessRank::of(data, invoker_id, invoker.as_ref());
 
     if rank < AccessRank::Admin {
-        return send_error(
+        return interact::send_error(
             ctx,
             command,
+            "Error",
             "You don't have permission to use this command",
         )
         .await;
@@ -88,21 +89,7 @@ fn build_not_found_embed(user_id: u64) -> CreateEmbed<'static> {
     CreateEmbed::new()
         .title("User Not Found")
         .description(format!("<@{}> is not registered", user_id))
-        .color(Color::new(COLOR_ERROR))
-}
-
-async fn send_error(ctx: &Context, command: &CommandInteraction, message: &str) -> Result<()> {
-    command
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .content(message)
-                    .ephemeral(true),
-            ),
-        )
-        .await?;
-    Ok(())
+        .color(Color::new(channel::COLOR_ERROR))
 }
 
 fn extract_user_option(options: &[serenity::all::CommandDataOption], name: &str) -> Option<u64> {

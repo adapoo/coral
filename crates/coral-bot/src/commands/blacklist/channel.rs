@@ -28,6 +28,7 @@ async fn face_attachment(data: &Data, uuid: &str) -> Option<CreateAttachment<'st
 
 pub const COLOR_SUCCESS: u32 = 0x00FF00;
 pub const COLOR_DANGER: u32 = 0xFF5555;
+pub const COLOR_ERROR: u32 = 0xED4245;
 pub const COLOR_INFO: u32 = 0x5865F2;
 pub const COLOR_FALLBACK: u32 = 0xFFA500;
 
@@ -179,19 +180,23 @@ pub async fn post_lock_change(
         )
     } else {
         (
-            format!("## {} Player Unlocked \u{1F513}\nIGN - `{}`", EMOTE_TAG, name),
+            format!(
+                "## {} Player Unlocked \u{1F513}\nIGN - `{}`",
+                EMOTE_TAG, name
+            ),
             COLOR_SUCCESS,
         )
     };
 
     let face = face_attachment(data, uuid).await;
     let header = CreateSection::new(
-        vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(title))],
+        vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
+            title,
+        ))],
         CreateSectionAccessory::Thumbnail(face_thumbnail()),
     );
 
-    let mut parts: Vec<CreateContainerComponent> =
-        vec![CreateContainerComponent::Section(header)];
+    let mut parts: Vec<CreateContainerComponent> = vec![CreateContainerComponent::Section(header)];
 
     if let Some(r) = reason {
         parts.push(CreateContainerComponent::TextDisplay(
@@ -207,10 +212,18 @@ pub async fn post_lock_change(
     parts.push(CreateContainerComponent::TextDisplay(
         CreateTextDisplay::new(format!("-# UUID: {}", dashed_uuid)),
     ));
-    parts.push(CreateContainerComponent::Separator(CreateSeparator::new(true)));
+    parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
+        true,
+    )));
 
     let files = face.into_iter().collect();
-    send_to_mod_channel(ctx, data, CreateContainer::new(parts).accent_color(color), files).await;
+    send_to_mod_channel(
+        ctx,
+        data,
+        CreateContainer::new(parts).accent_color(color),
+        files,
+    )
+    .await;
 }
 
 pub async fn post_key_revoked(
@@ -222,15 +235,18 @@ pub async fn post_key_revoked(
 ) {
     let invoker = get_username(ctx, invoker_id).await;
     let container = CreateContainer::new(vec![
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("## \u{1F528} User Banned\n<@{}>", target_id),
-        )),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("> {}", sanitize_reason(reason)),
-        )),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("-# Banned by `@{}`", invoker),
-        )),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## \u{1F528} User Banned\n<@{}>",
+            target_id
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "> {}",
+            sanitize_reason(reason)
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "-# Banned by `@{}`",
+            invoker
+        ))),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ])
     .accent_color(COLOR_DANGER);
@@ -256,15 +272,19 @@ pub async fn post_access_changed(
 ) {
     let invoker = get_username(ctx, invoker_id).await;
     let container = CreateContainer::new(vec![
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("## Access Level Changed\n<@{}>", target_id),
-        )),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("{} \u{2192} {}", old_rank.label(), new_rank.label()),
-        )),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("-# Changed by `@{}`", invoker),
-        )),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## Access Level Changed\n<@{}>",
+            target_id
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "{} \u{2192} {}",
+            old_rank.label(),
+            new_rank.label()
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "-# Changed by `@{}`",
+            invoker
+        ))),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ])
     .accent_color(COLOR_INFO);
@@ -287,12 +307,14 @@ pub async fn post_tagging_toggled(
 
     let invoker = get_username(ctx, invoker_id).await;
     let container = CreateContainer::new(vec![
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("## {}\n<@{}>", title, target_id),
-        )),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("-# Changed by `@{}`", invoker),
-        )),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## {}\n<@{}>",
+            title, target_id
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "-# Changed by `@{}`",
+            invoker
+        ))),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ])
     .accent_color(color);
@@ -315,12 +337,14 @@ async fn post_key_change(
 
     let invoker = get_username(ctx, invoker_id).await;
     let container = CreateContainer::new(vec![
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("## {}\n<@{}>", title, target_id),
-        )),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            format!("-# {} by `@{}`", action, invoker),
-        )),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## {}\n<@{}>",
+            title, target_id
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "-# {} by `@{}`",
+            action, invoker
+        ))),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ])
     .accent_color(color);

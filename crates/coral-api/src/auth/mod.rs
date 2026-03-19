@@ -3,9 +3,9 @@ use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::Response;
 
+use coral_redis::RateLimitResult;
 use database::{Member, MemberRepository};
 
-use crate::middleware::RateLimiter;
 use crate::state::AppState;
 
 const ACCESS_LEVEL_MODERATOR: i16 = 3;
@@ -83,16 +83,22 @@ async fn authenticate_member(state: &AppState, api_key: &str) -> Result<Member, 
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let allowed = RateLimiter::new(state.db.pool())
-        .check_and_increment(api_key, member.access_level)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    if !allowed {
-        return Err(StatusCode::TOO_MANY_REQUESTS);
+    let limit = rate_limit_for_access(member.access_level);
+    match state.rate_limiter.check_and_record(api_key, limit).await {
+        Ok(RateLimitResult::Allowed { .. }) => {}
+        Ok(RateLimitResult::Exceeded) => return Err(StatusCode::TOO_MANY_REQUESTS),
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 
     Ok(member)
+}
+
+fn rate_limit_for_access(access_level: i16) -> i64 {
+    match access_level {
+        4.. => 3000,
+        2..=3 => 1200,
+        _ => 600,
+    }
 }
 
 fn is_internal_key(state: &AppState, api_key: &str) -> bool {

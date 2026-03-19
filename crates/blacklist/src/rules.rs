@@ -143,3 +143,28 @@ fn is_dashed_uuid(s: &str) -> bool {
         .zip(expected_lens)
         .all(|(part, len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_all_tag_types() {
+        for tag in ALL_TAGS {
+            assert!(lookup(tag.name).is_some(), "lookup failed for {}", tag.name);
+        }
+    }
+
+    #[test]
+    fn lookup_unknown_returns_none() {
+        assert!(lookup("nonexistent").is_none());
+    }
+
+    #[test]
+    fn all_tags_have_unique_names() {
+        let names: Vec<&str> = ALL_TAGS.iter().map(|t| t.name).collect();
+        for (i, name) in names.iter().enumerate() {
+            assert!(!names[i + 1..].contains(name), "duplicate tag name: {name}");
+        }
+    }
+}
