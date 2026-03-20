@@ -69,7 +69,7 @@ impl CoralApiClient {
     }
 
     pub async fn get_player_stats(&self, identifier: &str) -> Result<PlayerStatsResponse> {
-        let url = format!("{}/v1/player/{}/stats", self.base_url, identifier);
+        let url = format!("{}/v1/player/stats/{}", self.base_url, identifier);
         self.get(&url).await
     }
 

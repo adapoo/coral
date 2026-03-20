@@ -50,7 +50,7 @@ async fn init_data() -> Result<Data> {
 
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL required");
     let redis_url = env::var("REDIS_URL").expect("REDIS_URL required");
-    let api_url = env::var("CORAL_API_URL").unwrap_or_else(|_| "http://localhost:8000".into());
+    let api_url = env::var("CORAL_API_URL").expect("CORAL_API_URL required");
     let api_key = env::var("INTERNAL_API_KEY").expect("INTERNAL_API_KEY required");
     let owner_ids = parse_owner_ids();
     let blacklist_channel_id = parse_channel_id("BLACKLIST_CHANNEL_ID");
