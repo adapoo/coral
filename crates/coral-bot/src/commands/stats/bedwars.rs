@@ -42,6 +42,7 @@ pub struct BedwarsCache {
 enum StatsError {
     PlayerNotFound,
     NoStats(String),
+    ApiError,
 }
 
 enum CacheResult {
@@ -159,6 +160,15 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                 command,
                 &format!("{username}'s Bedwars Stats"),
                 "This player has no Bedwars stats",
+            )
+            .await?;
+        }
+        Err(StatsError::ApiError) => {
+            send_deferred_error(
+                ctx,
+                command,
+                "Error",
+                "Something went wrong. Please try again later.",
             )
             .await?;
         }
@@ -285,7 +295,13 @@ async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, St
                 data.skin_provider.fetch(uuid),
                 cache_repo.get_all_snapshots_mapped(uuid, extract_winstreak_snapshot),
             );
-            let resp = api.map_err(|_| StatsError::PlayerNotFound)?;
+            let resp = api.map_err(|e| match e {
+                crate::api::ApiError::NotFound => StatsError::PlayerNotFound,
+                other => {
+                    tracing::error!("Internal API error: {other}");
+                    StatsError::ApiError
+                }
+            })?;
 
             if resp.uuid == *uuid {
                 (resp, guild, skin, history)
@@ -304,7 +320,13 @@ async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, St
                 .api
                 .get_player_stats(player)
                 .await
-                .map_err(|_| StatsError::PlayerNotFound)?;
+                .map_err(|e| match e {
+                    crate::api::ApiError::NotFound => StatsError::PlayerNotFound,
+                    other => {
+                        tracing::error!("Internal API error: {other}");
+                        StatsError::ApiError
+                    }
+                })?;
 
             let cache_repo = CacheRepository::new(data.db.pool());
             let (guild, skin, history) = tokio::join!(

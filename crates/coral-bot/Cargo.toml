@@ -25,6 +25,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 dotenvy.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 reqwest.workspace = true
 chrono.workspace = true
 urlencoding = "2.1.3"

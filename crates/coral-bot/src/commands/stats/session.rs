@@ -135,6 +135,7 @@ const PERIODS: [Period; 4] = [
 enum SessionError {
     PlayerNotFound,
     NoStats(String),
+    ApiError,
 }
 
 enum SwitchResult {
@@ -639,6 +640,15 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                 command,
                 &format!("{username}'s Session Stats"),
                 "This player has no Bedwars stats",
+            )
+            .await?;
+        }
+        Err(SessionError::ApiError) => {
+            send_deferred_error(
+                ctx,
+                command,
+                "Error",
+                "Something went wrong. Please try again later.",
             )
             .await?;
         }
@@ -1398,7 +1408,7 @@ async fn fetch_player(
 ) -> Result<
     (
         crate::api::PlayerStatsResponse,
-        Result<Option<crate::api::GuildResponse>, anyhow::Error>,
+        Result<Option<crate::api::GuildResponse>, crate::api::ApiError>,
         Option<clients::SkinImage>,
     ),
     SessionError,
@@ -1410,7 +1420,13 @@ async fn fetch_player(
                 data.api.get_guild(uuid, Some("player")),
                 data.skin_provider.fetch(uuid),
             );
-            let resp = api.map_err(|_| SessionError::PlayerNotFound)?;
+            let resp = api.map_err(|e| match e {
+                crate::api::ApiError::NotFound => SessionError::PlayerNotFound,
+                other => {
+                    tracing::error!("Internal API error: {other}");
+                    SessionError::ApiError
+                }
+            })?;
 
             if resp.uuid == uuid {
                 return Ok((resp, guild, skin));
@@ -1427,7 +1443,13 @@ async fn fetch_player(
                 .api
                 .get_player_stats(player)
                 .await
-                .map_err(|_| SessionError::PlayerNotFound)?;
+                .map_err(|e| match e {
+                    crate::api::ApiError::NotFound => SessionError::PlayerNotFound,
+                    other => {
+                        tracing::error!("Internal API error: {other}");
+                        SessionError::ApiError
+                    }
+                })?;
 
             let (guild, skin) = tokio::join!(
                 data.api.get_guild(&resp.uuid, Some("player")),
