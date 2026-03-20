@@ -360,29 +360,29 @@ async fn sync_member_batch(
     let mut updates = 0;
 
     for member in members {
-        let Some(uuid) = uuid_map.get(&(member.user.id.get() as i64)) else {
+        if member.user.bot() {
             continue;
-        };
-
-        let Some(hypixel_data) = cache.get_latest_snapshot(uuid).await.ok().flatten() else {
-            continue;
-        };
+        }
 
         total += 1;
 
-        match sync_member(
-            ctx,
-            data,
-            guild_id,
-            member,
-            uuid,
-            config,
-            rules,
-            &hypixel_data,
-            false,
-        )
-        .await
-        {
+        let result = match uuid_map.get(&(member.user.id.get() as i64)) {
+            Some(uuid) => {
+                let hypixel_data = cache.get_latest_snapshot(uuid).await.ok().flatten();
+                match hypixel_data {
+                    Some(data_val) => {
+                        sync_member(
+                            ctx, data, guild_id, member, uuid, config, rules, &data_val, false,
+                        )
+                        .await
+                    }
+                    None => sync_unlinked_member(ctx, guild_id, member, config, rules).await,
+                }
+            }
+            None => sync_unlinked_member(ctx, guild_id, member, config, rules).await,
+        };
+
+        match result {
             Ok(true) => updates += 1,
             Ok(false) => {}
             Err(e) => tracing::debug!("Sync failed for {} in {guild_id}: {e}", member.user.id),
@@ -450,6 +450,42 @@ pub(crate) async fn sync_member(
             member.add_role(&ctx.http, role_id, None).await?;
             updated = true;
         } else if !matches && member.roles.contains(&role_id) {
+            member.remove_role(&ctx.http, role_id, None).await?;
+            updated = true;
+        }
+    }
+
+    Ok(updated)
+}
+
+async fn sync_unlinked_member(
+    ctx: &Context,
+    _guild_id: GuildId,
+    member: &Member,
+    config: &GuildConfig,
+    rules: &[GuildRoleRule],
+) -> Result<bool> {
+    let mut updated = false;
+
+    if let Some(role_id) = config.unlinked_role_id {
+        let role_id = RoleId::new(role_id as u64);
+        if !member.roles.contains(&role_id) {
+            member.add_role(&ctx.http, role_id, None).await?;
+            updated = true;
+        }
+    }
+
+    if let Some(role_id) = config.link_role_id {
+        let role_id = RoleId::new(role_id as u64);
+        if member.roles.contains(&role_id) {
+            member.remove_role(&ctx.http, role_id, None).await?;
+            updated = true;
+        }
+    }
+
+    for rule in rules {
+        let role_id = RoleId::new(rule.role_id as u64);
+        if member.roles.contains(&role_id) {
             member.remove_role(&ctx.http, role_id, None).await?;
             updated = true;
         }
