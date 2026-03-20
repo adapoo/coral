@@ -49,7 +49,10 @@ jobs:
     steps:
       - name: Trigger Portainer redeploy
         run: |
-          response=$(curl -s -L -w "\nHTTP_CODE:%{http_code}" -X POST "${{ secrets.PORTAINER_WEBHOOK }}")
+          response=$(curl -s -L -w "\nHTTP_CODE:%{http_code}" -X POST \
+            -H "CF-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}" \
+            -H "CF-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}" \
+            "${{ secrets.PORTAINER_WEBHOOK }}")
           echo "$response"
           http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
           if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
