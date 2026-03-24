@@ -1,4 +1,4 @@
-use redis::aio::ConnectionManager;
+use reqwest::Client;
 use uuid::Uuid;
 
 const CODE_MIN: u16 = 1000;
@@ -7,24 +7,39 @@ const MAX_ATTEMPTS: usize = 100;
 
 #[derive(Clone)]
 pub struct CodeStore {
-    redis: ConnectionManager,
+    http: Client,
+    api_url: String,
+    api_key: String,
 }
 
 impl CodeStore {
-    pub fn new(redis: ConnectionManager) -> Self {
-        Self { redis }
+    pub fn new(http: Client, api_url: String, api_key: String) -> Self {
+        Self {
+            http,
+            api_url,
+            api_key,
+        }
     }
 
     pub async fn insert(&self, uuid: Uuid, username: String) -> String {
-        let mut conn = self.redis.clone();
+        let url = format!("{}/v1/verify/codes", self.api_url);
 
         for _ in 0..MAX_ATTEMPTS {
             let code = generate_code();
-            let stored = coral_redis::verify::store_code(&mut conn, &code, uuid, &username)
+            let response = self
+                .http
+                .post(&url)
+                .header("X-API-Key", &self.api_key)
+                .json(&serde_json::json!({
+                    "code": code,
+                    "uuid": uuid.simple().to_string(),
+                    "username": username,
+                }))
+                .send()
                 .await
                 .expect("failed to store verification code");
 
-            if stored {
+            if response.status().is_success() {
                 return code;
             }
         }

@@ -45,12 +45,16 @@ pub fn build_link_parts(
     prefix: &str,
     target_id: u64,
 ) -> Vec<CreateContainerComponent<'static>> {
+    let is_self = prefix != "manage";
     let mut parts: Vec<CreateContainerComponent> = Vec::new();
 
     if !matches.is_empty() {
-        parts.push(text(
-            "We found accounts that may be yours. Select one to link instantly:",
-        ));
+        let label = if is_self {
+            "We found accounts that may be yours. Select one to link instantly:"
+        } else {
+            "Recommended accounts based on Hypixel social settings:"
+        };
+        parts.push(text(label));
 
         let options: Vec<CreateSelectMenuOption> = matches
             .iter()
@@ -73,22 +77,27 @@ pub fn build_link_parts(
         parts.push(separator());
     }
 
-    parts.push(text(
-        "**Verification Server**\nJoin `link.urchin.gg` with the Minecraft account you want to link, and then enter the 4 digit code you receive here.",
-    ));
-    parts.push(CreateContainerComponent::ActionRow(
-        CreateActionRow::buttons(vec![
-            CreateButton::new(format!("{prefix}_add_code:{target_id}"))
-                .label("Enter Code")
-                .style(ButtonStyle::Primary),
-        ]),
-    ));
+    if is_self {
+        parts.push(text(
+            "**Verification Server**\nJoin `link.urchin.gg` with the Minecraft account you want to link, and then enter the 4 digit code you receive here.",
+        ));
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::buttons(vec![
+                CreateButton::new(format!("{prefix}_add_code:{target_id}"))
+                    .label("Enter Code")
+                    .style(ButtonStyle::Primary),
+            ]),
+        ));
 
-    parts.push(separator());
+        parts.push(separator());
+    }
 
-    parts.push(text(
-        "**Hypixel Verification**\nSet your Discord username in Hypixel's Social Media settings, then enter your IGN.",
-    ));
+    let hypixel_label = if is_self {
+        "**Hypixel Verification**\nSet your Discord username in Hypixel's Social Media settings, then enter your IGN."
+    } else {
+        "**Link by Username**\nEnter a Minecraft username to link. Hypixel social verification will be checked automatically."
+    };
+    parts.push(text(hypixel_label));
     parts.push(CreateContainerComponent::ActionRow(
         CreateActionRow::buttons(vec![
             CreateButton::new(format!("{prefix}_add_account:{target_id}"))

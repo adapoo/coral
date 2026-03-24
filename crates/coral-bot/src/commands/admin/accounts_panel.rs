@@ -390,7 +390,9 @@ pub async fn handle_link_pick(
             .await;
     };
 
-    match crate::accounts::check_link(data, uuid, &component.user.name).await {
+    let discord_name = resolve_target_discord_name(ctx, &component.user, target_id).await;
+
+    match crate::accounts::check_link(data, uuid, &discord_name).await {
         crate::accounts::LinkCheck::Verified { uuid, .. } => {
             crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await?;
             refresh_view(ctx, component, data, true, target_id).await
@@ -482,16 +484,18 @@ pub async fn handle_add_code_modal(
         return interact::send_modal_error(ctx, modal, "Error", "User is not registered").await;
     };
 
-    let mut conn = data.redis.connection();
-    let Some(player) = coral_redis::verify::redeem_code(&mut conn, &code).await else {
-        return interact::send_modal_error(
-            ctx, modal, "Invalid Code",
-            "That code is invalid or has expired.\n\nJoin the verification server to get a new code.",
-        )
-        .await;
+    let player = match data.api.redeem_verify_code(&code).await {
+        Ok(p) => p,
+        Err(_) => {
+            return interact::send_modal_error(
+                ctx, modal, "Invalid Code",
+                "That code is invalid or has expired.\n\nJoin the verification server to get a new code.",
+            )
+            .await;
+        }
     };
 
-    let uuid = player.uuid.simple().to_string();
+    let uuid = player.uuid.clone();
     crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await?;
 
     let can_modify = resolve_can_modify(prefix, invoker_rank, target_rank, is_self);

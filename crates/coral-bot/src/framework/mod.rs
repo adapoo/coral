@@ -288,10 +288,6 @@ impl Handler {
             _ if id.starts_with("evidence_add_media") => {
                 commands::blacklist::evidence::handle_add_media(ctx, component, &self.data).await
             }
-            _ if id.starts_with("evidence_cancel_upload") => {
-                commands::blacklist::evidence::handle_cancel_upload(ctx, component, &self.data)
-                    .await
-            }
             _ if id.starts_with("evidence_remove") => {
                 commands::blacklist::evidence::handle_remove(ctx, component, &self.data).await
             }
@@ -332,23 +328,30 @@ impl Handler {
             _ if id.starts_with("review_add_replay:") => {
                 commands::blacklist::reviews::handle_add_replay(ctx, component, &self.data).await
             }
-            _ if id.starts_with("review_add_attachment:") => {
-                commands::blacklist::reviews::handle_add_attachment(ctx, component, &self.data)
-                    .await
+            _ if id.starts_with("review_attach_media:") => {
+                commands::blacklist::reviews::handle_attach_media(ctx, component, &self.data).await
             }
-            _ if id.starts_with("review_cancel_attachment:") => {
-                commands::blacklist::reviews::handle_cancel_attachment(ctx, component, &self.data)
-                    .await
+            _ if id.starts_with("review_edit_tag:") => {
+                commands::blacklist::reviews::handle_edit_tag(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("review_edit_done:") => {
+                commands::blacklist::reviews::handle_edit_done(ctx, component, &self.data).await
             }
             _ if id.starts_with("review_remove_player:") => {
                 commands::blacklist::reviews::handle_remove_player(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("review_edit_evidence:") => {
+                commands::blacklist::reviews::handle_edit_evidence(ctx, component, &self.data).await
             }
             _ if id.starts_with("review_remove_evidence:") => {
                 commands::blacklist::reviews::handle_remove_evidence(ctx, component, &self.data)
                     .await
             }
-            _ if id.starts_with("review_tag_select_add:") => {
-                commands::blacklist::reviews::handle_tag_select_add(ctx, component, &self.data)
+            _ if id.starts_with("review_add_player:") => {
+                commands::blacklist::reviews::handle_add_player(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("review_pending_tag:") => {
+                commands::blacklist::reviews::handle_pending_tag_select(ctx, component, &self.data)
                     .await
             }
             _ if id.starts_with("review_tag_select_edit:") => {
@@ -447,11 +450,22 @@ impl Handler {
             _ if id.starts_with("session_rename_modal:") => {
                 commands::stats::session::handle_rename_modal(ctx, modal, &self.data).await
             }
-            _ if id.starts_with("review_player_modal:") => {
-                commands::blacklist::reviews::handle_player_modal(ctx, modal, &self.data).await
+            _ if id.starts_with("review_addplayer_name:") => {
+                commands::blacklist::reviews::handle_addplayer_name_modal(ctx, modal, &self.data)
+                    .await
+            }
+            _ if id.starts_with("review_addplayer_reason:") => {
+                commands::blacklist::reviews::handle_addplayer_reason_modal(ctx, modal, &self.data)
+                    .await
             }
             _ if id.starts_with("review_replay_modal:") => {
                 commands::blacklist::reviews::handle_replay_modal(ctx, modal, &self.data).await
+            }
+            _ if id.starts_with("review_media_modal:") => {
+                commands::blacklist::reviews::handle_media_modal(ctx, modal, &self.data).await
+            }
+            _ if id.starts_with("evidence_media_modal") => {
+                commands::blacklist::evidence::handle_media_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("review_reject_modal:") => {
                 commands::blacklist::reviews::handle_reject_modal(ctx, modal, &self.data).await
@@ -569,14 +583,6 @@ impl EventHandler for Handler {
                     let msg = new_message.clone();
                     let data = self.data.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = commands::blacklist::reviews::handle_attachment_message(
-                            &ctx2, &msg, &data,
-                        )
-                        .await
-                        {
-                            tracing::error!("Review attachment capture error: {}", e);
-                        }
-
                         if let Err(e) = commands::blacklist::evidence::handle_attachment_message(
                             &ctx2, &msg, &data,
                         )

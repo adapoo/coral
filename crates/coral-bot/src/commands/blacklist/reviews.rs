@@ -1,15 +1,19 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use blacklist::{EMOTE_ADDTAG, EMOTE_TAG, Replay, lookup as lookup_tag, parse_replay};
 use database::{BlacklistRepository, MemberRepository};
 use serenity::all::{
-    ButtonStyle, Component, ComponentInteraction, ComponentInteractionDataKind, Context,
-    CreateActionRow, CreateAttachment, CreateButton, CreateComponent, CreateContainer,
-    CreateContainerComponent, CreateForumPost, CreateInputText, CreateInteractionResponse,
-    CreateInteractionResponseMessage, CreateLabel, CreateMediaGallery, CreateMediaGalleryItem,
-    CreateMessage, CreateModal, CreateModalComponent, CreateSelectMenu, CreateSelectMenuKind,
-    CreateSelectMenuOption, CreateUnfurledMediaItem, EditAttachments, EditMessage, EditThread,
-    ForumTagId, GenericChannelId, InputTextStyle, Message, MessageFlags, MessageId,
-    ModalInteraction, ThreadId,
+    AttachmentId, ButtonStyle, Component, ComponentInteraction, ComponentInteractionDataKind,
+    Context, CreateActionRow, CreateAttachment, CreateButton, CreateComponent, CreateContainer,
+    CreateContainerComponent, CreateFileUpload, CreateForumPost, CreateInputText,
+    CreateInteractionResponse, CreateInteractionResponseMessage, CreateLabel, CreateMediaGallery,
+    CreateMediaGalleryItem, CreateMessage, CreateModal, CreateModalComponent, CreateSelectMenu,
+    CreateSelectMenuKind,
+    CreateSelectMenuOption, CreateUnfurledMediaItem,
+    EditAttachments, EditMessage, EditThread, ForumTagId, GenericChannelId, InputTextStyle,
+    LabelComponent, Message, MessageFlags,
+    MessageId, ModalInteraction, ThreadId,
 };
 
 use crate::framework::Data;
@@ -52,8 +56,15 @@ enum Evidence {
         note: Option<String>,
     },
     Attachment {
-        url: String,
+        filename: String,
     },
+}
+
+#[derive(Debug, Clone)]
+struct PendingAdd {
+    identifier: String,
+    username: String,
+    is_nicked: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -61,9 +72,14 @@ struct SubmissionState {
     submitter_id: u64,
     players: Vec<PlayerEntry>,
     submitted: bool,
+    editing: Option<usize>,
+    pending_add: Option<PendingAdd>,
 }
 
 const MAX_MEDIA_PER_PLAYER: usize = 4;
+const ALLOWED_MEDIA_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov",
+];
 const REVIEW_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
 const SUBMISSION_TIMEOUT_SECS: u64 = 30 * 60;
 const SUBMISSION_WARNING_SECS: u64 = 20 * 60;
@@ -106,30 +122,6 @@ fn extract_text_displays(message: &Message) -> Vec<String> {
         .collect()
 }
 
-fn extract_attachment_prompt_idx(message: &Message) -> Option<usize> {
-    for component in &message.components {
-        let Component::Container(container) = component else {
-            continue;
-        };
-        for part in &container.components {
-            let serenity::all::ContainerComponent::ActionRow(row) = part else {
-                continue;
-            };
-            for item in &row.components {
-                if let serenity::all::ActionRowComponent::Button(btn) = item {
-                    if let serenity::all::ButtonKind::NonLink { custom_id, .. } = &btn.data {
-                        let id: &str = custom_id.as_str();
-                        if let Some(rest) = id.strip_prefix("review_cancel_attachment:") {
-                            return rest.split(':').next()?.parse().ok();
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
     let container = message.components.iter().find_map(|c| match c {
         Component::Container(c) => Some(c),
@@ -148,38 +140,55 @@ fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
 
     for part in &*container.components {
         match part {
+            serenity::all::ContainerComponent::Section(section) => {
+                let header_text = section.components.iter().find_map(|c| match c {
+                    serenity::all::SectionComponent::TextDisplay(td) => td.content.clone(),
+                    _ => None,
+                });
+                if let Some(header) = header_text {
+                    if is_player_entry(&header) {
+                        if let Some(player) = parse_player_header(&header) {
+                            players.push(player);
+                        }
+                    }
+                }
+            }
             serenity::all::ContainerComponent::TextDisplay(td) => {
                 let Some(content) = &td.content else { continue };
                 let trimmed = content.trim();
 
                 if is_player_entry(trimmed) {
-                    if let Some(player) = parse_player_block(trimmed) {
+                    if let Some(player) = parse_player_header(trimmed) {
                         players.push(player);
                     }
                     continue;
                 }
 
                 if let Some(player) = players.last_mut() {
-                    if let Some(status) = parse_status_line(trimmed) {
+                    if trimmed.starts_with('>') {
+                        parse_player_details(player, trimmed);
+                    } else if let Some(status) = parse_status_line(trimmed) {
                         player.status = status.0;
                         player.reviewer = status.1;
                         player.review_note = status.2;
                     } else if let Some(votes) = parse_votes_line(trimmed) {
                         player.accept_votes = votes.0;
                         player.reject_votes = votes.1;
+                    } else {
+                        for line in trimmed.lines() {
+                            if let Some(evidence) = parse_evidence_line(line.trim()) {
+                                player.evidence.push(evidence);
+                            }
+                        }
                     }
                 }
             }
             serenity::all::ContainerComponent::MediaGallery(gallery) => {
                 for item in &*gallery.items {
-                    let url = item
-                        .media
-                        .proxy_url
-                        .as_ref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| item.media.url.to_string());
+                    let url = item.media.url.to_string();
+                    let filename = attachment_filename_from_url(&url);
                     if let Some(player) = players.last_mut() {
-                        player.evidence.push(Evidence::Attachment { url });
+                        player.evidence.push(Evidence::Attachment { filename });
                     }
                 }
             }
@@ -195,6 +204,8 @@ fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
         submitter_id,
         players,
         submitted,
+        editing: None,
+        pending_add: None,
     })
 }
 
@@ -207,15 +218,8 @@ fn find_dash_separator(s: &str) -> Option<usize> {
     s.find(" \u{2014} ")
 }
 
-fn parse_player_block(content: &str) -> Option<PlayerEntry> {
-    let lines: Vec<&str> = content.lines().collect();
-    if lines.is_empty() {
-        return None;
-    }
-
-    let header = lines[0];
+fn parse_player_header(header: &str) -> Option<PlayerEntry> {
     let username = header.split('`').nth(1)?.to_string();
-
     let dash_pos = find_dash_separator(header)?;
     let tag_part = &header[..dash_pos];
     let display_name = if tag_part.contains('>') {
@@ -225,45 +229,47 @@ fn parse_player_block(content: &str) -> Option<PlayerEntry> {
     };
     let tag_name = lookup_tag_name_from_display(display_name)?;
 
-    let reason = lines
-        .get(1)
-        .and_then(|l| l.strip_prefix("> "))
-        .unwrap_or("")
-        .to_string();
-
-    let meta_line = lines.get(2).unwrap_or(&"");
-    let meta = meta_line.strip_prefix("> -# ").unwrap_or(meta_line);
-
-    let is_nicked = meta.contains("Nicked");
-    let uuid = if is_nicked {
-        String::new()
-    } else {
-        meta.strip_prefix("UUID: ")
-            .and_then(|s| s.split_whitespace().next())
-            .unwrap_or("")
-            .replace('-', "")
-    };
-
-    let evidence = lines
-        .iter()
-        .skip(3)
-        .filter_map(|l| parse_evidence_line(l.trim()))
-        .collect();
-
     Some(PlayerEntry {
         username,
-        uuid,
+        uuid: String::new(),
         tag_type: tag_name.to_string(),
-        reason,
-        is_nicked,
+        reason: String::new(),
+        is_nicked: false,
         status: PlayerStatus::Pending,
         reviewer: None,
         review_note: None,
-        evidence,
+        evidence: Vec::new(),
         conflict_warning: None,
         accept_votes: Vec::new(),
         reject_votes: Vec::new(),
     })
+}
+
+fn parse_player_details(player: &mut PlayerEntry, content: &str) {
+    let lines: Vec<&str> = content.lines().collect();
+
+    if let Some(reason) = lines.first().and_then(|l| l.strip_prefix("> ")) {
+        player.reason = reason.to_string();
+    }
+
+    if let Some(meta_line) = lines.get(1) {
+        let meta = meta_line.strip_prefix("> -# ").unwrap_or(meta_line);
+        if meta.contains("Nicked") {
+            player.is_nicked = true;
+        } else if let Some(uuid_str) = meta.strip_prefix("UUID: ") {
+            player.uuid = uuid_str
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .replace('-', "");
+        }
+    }
+
+    for line in lines.iter().skip(2) {
+        if let Some(evidence) = parse_evidence_line(line.trim()) {
+            player.evidence.push(evidence);
+        }
+    }
 }
 
 fn parse_status_line(text: &str) -> Option<(PlayerStatus, Option<String>, Option<String>)> {
@@ -349,134 +355,265 @@ fn build_header(state: &SubmissionState) -> CreateContainerComponent<'static> {
     ))
 }
 
-fn build_review_message(state: &SubmissionState) -> Vec<CreateComponent<'static>> {
+fn build_review_message(
+    state: &SubmissionState,
+    existing_urls: &HashMap<String, String>,
+) -> Vec<CreateComponent<'static>> {
     let id = state.submitter_id;
     let mut parts = vec![build_header(state), separator()];
 
-    if state.players.is_empty() {
+    if state.players.is_empty() && state.pending_add.is_none() {
         parts.push(text("-# No players added yet"));
     }
 
     for (idx, player) in state.players.iter().enumerate() {
-        parts.push(text(render_player_block(player)));
+        let is_editing = state.editing == Some(idx);
+        let show_edit_tag = !state.submitted && !is_editing;
+        build_player_card(&mut parts, player, idx, id, show_edit_tag);
 
-        if let Some(gallery) = media_gallery_for(player) {
+        if is_editing {
+            build_tag_edit_controls(&mut parts, player, idx, id);
+        }
+
+        if let Some(summary) = render_evidence_summary(player) {
+            parts.push(text(summary));
+        }
+
+        if let Some(gallery) = media_gallery_for(player, existing_urls) {
             parts.push(gallery);
         }
 
         if state.submitted {
-            if player.status == PlayerStatus::Pending {
-                if has_votes(player) {
-                    parts.push(text(render_vote_status(player)));
-                }
-
-                parts.push(CreateContainerComponent::ActionRow(
-                    CreateActionRow::Buttons(
-                        vec![
-                            CreateButton::new(format!("review_approve:{}:{}", idx, id))
-                                .label("Accept")
-                                .style(ButtonStyle::Success),
-                            CreateButton::new(format!("review_reject:{}:{}", idx, id))
-                                .label("Reject")
-                                .style(ButtonStyle::Danger),
-                        ]
-                        .into(),
-                    ),
-                ));
-            } else {
-                parts.push(text(render_status_line(player)));
-            }
-        } else {
-            let edit_select = CreateSelectMenu::new(
-                format!("review_tag_select_edit:{idx}:{id}"),
-                CreateSelectMenuKind::String {
-                    options: build_tag_select_options(Some(&player.tag_type)).into(),
-                },
-            )
-            .placeholder("Change tag type");
-
-            parts.push(CreateContainerComponent::ActionRow(
-                CreateActionRow::SelectMenu(edit_select),
-            ));
-            parts.push(CreateContainerComponent::ActionRow(
-                CreateActionRow::Buttons(
-                    vec![
-                        CreateButton::new(format!("review_add_replay:{idx}:{id}"))
-                            .label("Add Replay")
-                            .style(ButtonStyle::Secondary),
-                        CreateButton::new(format!("review_add_attachment:{idx}:{id}"))
-                            .label("Add Media")
-                            .style(ButtonStyle::Secondary),
-                        CreateButton::new(format!("review_remove_player:{idx}:{id}"))
-                            .label("Remove")
-                            .style(ButtonStyle::Danger),
-                    ]
-                    .into(),
-                ),
-            ));
+            build_submitted_controls(&mut parts, player, idx, id);
+        } else if !is_editing {
+            build_evidence_controls(&mut parts, player, idx, id);
         }
 
         parts.push(separator());
     }
 
-    if state.submitted {
-        parts.push(text("-# Submitted \u{2014} awaiting review"));
-
-        let has_pending = state
-            .players
-            .iter()
-            .any(|p| p.status == PlayerStatus::Pending);
-        if has_pending {
-            parts.push(CreateContainerComponent::ActionRow(
-                CreateActionRow::Buttons(
-                    vec![
-                        CreateButton::new(format!("review_edit_submitted:{id}"))
-                            .label("Edit")
-                            .style(ButtonStyle::Secondary),
-                    ]
-                    .into(),
-                ),
-            ));
-        }
-    } else {
-        if state.players.len() < 4 {
-            let add_select = CreateSelectMenu::new(
-                format!("review_tag_select_add:{id}"),
-                CreateSelectMenuKind::String {
-                    options: build_tag_select_options(None).into(),
-                },
-            )
-            .placeholder("Add Player \u{2014} select tag type");
-
-            parts.push(CreateContainerComponent::ActionRow(
-                CreateActionRow::SelectMenu(add_select),
-            ));
-        }
+    if let Some(pending) = &state.pending_add {
+        build_pending_add_section(&mut parts, pending, id);
         parts.push(separator());
-        parts.push(CreateContainerComponent::ActionRow(
-            CreateActionRow::Buttons(
-                vec![
-                    CreateButton::new(format!("review_submit:{id}"))
-                        .label("Submit for Review")
-                        .style(ButtonStyle::Success),
-                    CreateButton::new(format!("review_cancel_thread:{id}"))
-                        .label("Cancel")
-                        .style(ButtonStyle::Danger),
-                ]
-                .into(),
-            ),
-        ));
+    }
+
+    if state.submitted {
+        build_submitted_footer(&mut parts, state, id);
+    } else {
+        build_editing_footer(&mut parts, state, id);
     }
 
     let container = CreateContainer::new(parts);
     vec![CreateComponent::Container(container)]
 }
 
-fn render_player_block(player: &PlayerEntry) -> String {
+fn build_player_card(
+    parts: &mut Vec<CreateContainerComponent<'static>>,
+    player: &PlayerEntry,
+    idx: usize,
+    id: u64,
+    show_edit_button: bool,
+) {
     let def = lookup_tag(&player.tag_type);
     let emote = def.map(|d| d.emote).unwrap_or("");
     let display_name = def.map(|d| d.display_name).unwrap_or(&player.tag_type);
 
+    parts.push(text(format!(
+        "{emote} {display_name} \u{2014} `{}`",
+        player.username
+    )));
+    parts.push(text(render_player_details(player)));
+
+    if show_edit_button {
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::Buttons(
+                vec![CreateButton::new(format!("review_edit_tag:{idx}:{id}"))
+                    .label("Edit Tag")
+                    .style(ButtonStyle::Secondary)]
+                .into(),
+            ),
+        ));
+    }
+}
+
+fn build_evidence_controls(
+    parts: &mut Vec<CreateContainerComponent<'static>>,
+    player: &PlayerEntry,
+    idx: usize,
+    id: u64,
+) {
+    let has_evidence = !player.evidence.is_empty();
+
+    let mut buttons = vec![
+        CreateButton::new(format!("review_add_replay:{idx}:{id}"))
+            .label("Attach Replay")
+            .style(ButtonStyle::Primary),
+        CreateButton::new(format!("review_attach_media:{idx}:{id}"))
+            .label("Attach Media")
+            .style(ButtonStyle::Primary),
+    ];
+
+    if has_evidence {
+        buttons.push(
+            CreateButton::new(format!("review_edit_evidence:{idx}:{id}"))
+                .label("Edit Evidence")
+                .style(ButtonStyle::Secondary),
+        );
+    }
+
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::Buttons(buttons.into()),
+    ));
+}
+
+fn build_tag_edit_controls(
+    parts: &mut Vec<CreateContainerComponent<'static>>,
+    player: &PlayerEntry,
+    idx: usize,
+    id: u64,
+) {
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::SelectMenu(
+            CreateSelectMenu::new(
+                format!("review_tag_select_edit:{idx}:{id}"),
+                CreateSelectMenuKind::String {
+                    options: build_tag_select_options(Some(&player.tag_type)).into(),
+                },
+            )
+            .placeholder("Change tag type"),
+        ),
+    ));
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::Buttons(
+            vec![
+                CreateButton::new(format!("review_remove_player:{idx}:{id}"))
+                    .label("Remove Tag")
+                    .style(ButtonStyle::Danger),
+                CreateButton::new(format!("review_edit_done:{idx}:{id}"))
+                    .label("Done")
+                    .style(ButtonStyle::Secondary),
+            ]
+            .into(),
+        ),
+    ));
+}
+
+fn build_submitted_controls(
+    parts: &mut Vec<CreateContainerComponent<'static>>,
+    player: &PlayerEntry,
+    idx: usize,
+    id: u64,
+) {
+    if player.status == PlayerStatus::Pending {
+        if has_votes(player) {
+            parts.push(text(render_vote_status(player)));
+        }
+
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::Buttons(
+                vec![
+                    CreateButton::new(format!("review_approve:{idx}:{id}"))
+                        .label("Accept")
+                        .style(ButtonStyle::Success),
+                    CreateButton::new(format!("review_reject:{idx}:{id}"))
+                        .label("Reject")
+                        .style(ButtonStyle::Danger),
+                ]
+                .into(),
+            ),
+        ));
+    } else {
+        parts.push(text(render_status_line(player)));
+    }
+}
+
+fn build_pending_add_section(
+    parts: &mut Vec<CreateContainerComponent<'static>>,
+    pending: &PendingAdd,
+    id: u64,
+) {
+    parts.push(text(format!(
+        "Adding **`{}`** \u{2014} select a tag type:",
+        pending.username
+    )));
+
+    let nicked = if pending.is_nicked { "1" } else { "0" };
+
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::SelectMenu(
+            CreateSelectMenu::new(
+                format!(
+                    "review_pending_tag:{}:{}:{}",
+                    pending.identifier, nicked, id
+                ),
+                CreateSelectMenuKind::String {
+                    options: build_tag_select_options(None).into(),
+                },
+            )
+            .placeholder("Select tag type"),
+        ),
+    ));
+}
+
+fn build_submitted_footer(
+    parts: &mut Vec<CreateContainerComponent<'static>>,
+    state: &SubmissionState,
+    id: u64,
+) {
+    parts.push(text("-# Submitted \u{2014} awaiting review"));
+
+    let has_pending = state
+        .players
+        .iter()
+        .any(|p| p.status == PlayerStatus::Pending);
+    if has_pending {
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::Buttons(
+                vec![CreateButton::new(format!("review_edit_submitted:{id}"))
+                    .label("Edit")
+                    .style(ButtonStyle::Secondary)]
+                .into(),
+            ),
+        ));
+    }
+}
+
+fn build_editing_footer(
+    parts: &mut Vec<CreateContainerComponent<'static>>,
+    state: &SubmissionState,
+    id: u64,
+) {
+    parts.push(text(
+        "-# Add evidence for each player, then submit when ready.",
+    ));
+
+    let mut buttons = Vec::new();
+
+    if state.players.len() < 4 && state.pending_add.is_none() {
+        buttons.push(
+            CreateButton::new(format!("review_add_player:{id}"))
+                .label("Add Player")
+                .style(ButtonStyle::Primary),
+        );
+    }
+
+    buttons.push(
+        CreateButton::new(format!("review_submit:{id}"))
+            .label("Submit for Review")
+            .style(ButtonStyle::Success),
+    );
+    buttons.push(
+        CreateButton::new(format!("review_cancel_thread:{id}"))
+            .label("Cancel")
+            .style(ButtonStyle::Secondary),
+    );
+
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::Buttons(buttons.into()),
+    ));
+}
+
+fn render_player_details(player: &PlayerEntry) -> String {
     let uuid_line = if player.is_nicked {
         "Nicked \u{2014} UUID could not be resolved".to_string()
     } else {
@@ -484,41 +621,10 @@ fn render_player_block(player: &PlayerEntry) -> String {
     };
 
     let mut block = format!(
-        "{} {} \u{2014} `{}`\n> {}\n> -# {}",
-        emote,
-        display_name,
-        player.username,
+        "> {}\n> -# {}",
         sanitize_reason(&player.reason),
         uuid_line,
     );
-
-    let replays: Vec<String> = player
-        .evidence
-        .iter()
-        .filter_map(|e| match e {
-            Evidence::Replay { replay, note } => Some(render_replay_line(replay, note.as_deref())),
-            _ => None,
-        })
-        .collect();
-
-    if !replays.is_empty() {
-        block.push('\n');
-        block.push_str(&replays.join("\n"));
-    }
-
-    let media_count = player
-        .evidence
-        .iter()
-        .filter(|e| matches!(e, Evidence::Attachment { .. }))
-        .count();
-
-    if media_count > 0 {
-        block.push_str(&format!(
-            "\n-# {} media attachment{}",
-            media_count,
-            if media_count == 1 { "" } else { "s" }
-        ));
-    }
 
     if let Some(warning) = &player.conflict_warning {
         block.push('\n');
@@ -528,14 +634,63 @@ fn render_player_block(player: &PlayerEntry) -> String {
     block
 }
 
-fn media_gallery_for(player: &PlayerEntry) -> Option<CreateContainerComponent<'static>> {
+fn render_evidence_summary(player: &PlayerEntry) -> Option<String> {
+    let replays: Vec<String> = player
+        .evidence
+        .iter()
+        .filter_map(|e| match e {
+            Evidence::Replay { replay, note } => Some(render_replay_line(replay, note.as_deref())),
+            _ => None,
+        })
+        .collect();
+
+    let media_count = player
+        .evidence
+        .iter()
+        .filter(|e| matches!(e, Evidence::Attachment { .. }))
+        .count();
+
+    if replays.is_empty() && media_count == 0 {
+        return None;
+    }
+
+    let mut block = String::new();
+
+    if !replays.is_empty() {
+        block.push_str(&replays.join("\n"));
+    }
+
+    if media_count > 0 {
+        if !block.is_empty() {
+            block.push('\n');
+        }
+        block.push_str(&format!(
+            "-# {} media attachment{}",
+            media_count,
+            if media_count == 1 { "" } else { "s" }
+        ));
+    }
+
+    Some(block)
+}
+
+fn media_gallery_for(
+    player: &PlayerEntry,
+    existing_urls: &HashMap<String, String>,
+) -> Option<CreateContainerComponent<'static>> {
     let items: Vec<CreateMediaGalleryItem> = player
         .evidence
         .iter()
         .filter_map(|e| match e {
-            Evidence::Attachment { url, .. } => Some(CreateMediaGalleryItem::new(
-                CreateUnfurledMediaItem::new(url.clone()),
-            )),
+            Evidence::Attachment { filename } => {
+                let url = existing_urls
+                    .get(filename)
+                    .cloned()
+                    .unwrap_or_else(|| format!("attachment://{filename}"));
+                Some(CreateMediaGalleryItem::new(
+                    CreateUnfurledMediaItem::new(url),
+                ))
+            }
             _ => None,
         })
         .collect();
@@ -714,13 +869,15 @@ pub async fn create_submission(
         submitter_id,
         players: vec![player],
         submitted: false,
+        editing: None,
+        pending_add: None,
     };
 
     let thread_title = format!("{} — {}", player_name, display_name);
 
     let message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(build_review_message(&state));
+        .components(build_review_message(&state, &HashMap::new()));
 
     let mut forum_post = CreateForumPost::new(thread_title, message);
 
@@ -779,9 +936,26 @@ fn parse_submitter_id(custom_id: &str) -> Option<u64> {
     custom_id.split(':').last()?.parse().ok()
 }
 
-fn verify_submitter(component: &ComponentInteraction, custom_id: &str) -> bool {
-    let expected = parse_submitter_id(custom_id).unwrap_or(0);
+fn is_submitter(component: &ComponentInteraction) -> bool {
+    let expected = parse_submitter_id(&component.data.custom_id).unwrap_or(0);
     component.user.id.get() == expected
+}
+
+async fn require_submitter(ctx: &Context, component: &ComponentInteraction) -> Result<bool> {
+    if is_submitter(component) {
+        return Ok(true);
+    }
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content("Only the submission creator can use these buttons")
+                    .ephemeral(true),
+            ),
+        )
+        .await?;
+    Ok(false)
 }
 
 async fn send_vote_error(
@@ -802,8 +976,11 @@ async fn send_vote_error(
     Ok(())
 }
 
-fn get_builder_message(component: &ComponentInteraction) -> Message {
-    *component.message.clone()
+fn attachment_id_from_cdn_url(url: &str) -> Option<AttachmentId> {
+    let path = url.split("/attachments/").nth(1)?;
+    let id_str = path.split('/').nth(1)?;
+    let id_str = id_str.split('?').next().unwrap_or(id_str);
+    id_str.parse::<u64>().ok().map(AttachmentId::new)
 }
 
 async fn find_builder_message(ctx: &Context, channel_id: GenericChannelId) -> Option<Message> {
@@ -829,16 +1006,39 @@ async fn update_builder(
     message: &Message,
     state: &SubmissionState,
 ) -> Result<()> {
+    let urls = gallery_url_map(message);
     let edit = EditMessage::new()
-        .content("")
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(build_review_message(state));
+        .components(build_review_message(state, &urls));
 
     ctx.http
         .edit_message(channel_id, message.id, &edit, Vec::new())
         .await?;
 
     Ok(())
+}
+
+fn gallery_url_map(message: &Message) -> HashMap<String, String> {
+    let Some(container) = message.components.iter().find_map(|c| match c {
+        Component::Container(c) => Some(c),
+        _ => None,
+    }) else {
+        return HashMap::new();
+    };
+
+    let mut map = HashMap::new();
+    for part in &*container.components {
+        if let serenity::all::ContainerComponent::MediaGallery(gallery) = part {
+            for item in &*gallery.items {
+                let url = item.media.url.to_string();
+                if !url.starts_with("attachment://") {
+                    let filename = attachment_filename_from_url(&url);
+                    map.insert(filename, url);
+                }
+            }
+        }
+    }
+    map
 }
 
 async fn update_builder_with_files(
@@ -848,16 +1048,22 @@ async fn update_builder_with_files(
     state: &SubmissionState,
     files: Vec<CreateAttachment<'static>>,
 ) -> Result<()> {
-    let mut edit = EditMessage::new()
-        .content("")
-        .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(build_review_message(state));
+    let existing_urls = gallery_url_map(message);
 
-    let mut attachments = EditAttachments::keep_all(message);
-    for f in &files {
-        attachments = attachments.add(f.clone());
+    let mut attachments = EditAttachments::new();
+    for url in existing_urls.values() {
+        if let Some(id) = attachment_id_from_cdn_url(url) {
+            attachments = attachments.keep(id);
+        }
     }
-    edit = edit.attachments(attachments);
+    for f in files.iter().cloned() {
+        attachments = attachments.add(f);
+    }
+
+    let edit = EditMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(build_review_message(state, &existing_urls))
+        .attachments(attachments);
 
     ctx.http
         .edit_message(channel_id, message.id, &edit, files)
@@ -866,58 +1072,92 @@ async fn update_builder_with_files(
     Ok(())
 }
 
-pub async fn handle_tag_select_add(
+fn attachment_filename_from_url(url: &str) -> String {
+    if let Some(name) = url.strip_prefix("attachment://") {
+        return name.to_string();
+    }
+    url.rsplit('/')
+        .next()
+        .map(|s| s.split('?').next().unwrap_or(s))
+        .unwrap_or("unknown.png")
+        .to_string()
+}
+
+fn extract_media_urls_from_message(message: &Message, player_index: usize) -> Vec<String> {
+    let Some(container) = message.components.iter().find_map(|c| match c {
+        Component::Container(c) => Some(c),
+        _ => None,
+    }) else {
+        return Vec::new();
+    };
+
+    let mut current_player = 0usize;
+    let mut seen_first = false;
+    let mut urls = Vec::new();
+
+    for part in &*container.components {
+        match part {
+            serenity::all::ContainerComponent::Section(section) => {
+                let has_player = section.components.iter().any(|c| match c {
+                    serenity::all::SectionComponent::TextDisplay(td) => {
+                        td.content.as_ref().is_some_and(|t| is_player_entry(t))
+                    }
+                    _ => false,
+                });
+                if has_player {
+                    if seen_first {
+                        current_player += 1;
+                    }
+                    seen_first = true;
+                }
+            }
+            serenity::all::ContainerComponent::TextDisplay(td) => {
+                if let Some(content) = &td.content {
+                    if is_player_entry(content.trim()) {
+                        if seen_first {
+                            current_player += 1;
+                        }
+                        seen_first = true;
+                    }
+                }
+            }
+            serenity::all::ContainerComponent::MediaGallery(gallery)
+                if seen_first && current_player == player_index =>
+            {
+                for item in &*gallery.items {
+                    urls.push(item.media.url.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    urls
+}
+
+pub async fn handle_add_player(
     ctx: &Context,
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
-        return Ok(());
-    }
-
-    let tag_type = match &component.data.kind {
-        ComponentInteractionDataKind::StringSelect { values } => {
-            values.first().map(|s| s.as_str()).unwrap_or("")
-        }
-        _ => return Ok(()),
-    };
-
-    if lookup_tag(tag_type).is_none() {
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
     let submitter_id = parse_submitter_id(&component.data.custom_id).unwrap_or(0);
 
-    let player_input = CreateInputText::new(InputTextStyle::Short, "player")
+    let input = CreateInputText::new(InputTextStyle::Short, "player")
         .placeholder("Minecraft username")
         .min_length(1)
         .max_length(16);
-    let player_label = CreateLabel::input_text("Player Name", player_input);
-
-    let reason_input = CreateInputText::new(InputTextStyle::Short, "reason")
-        .placeholder("Reason for this tag")
-        .min_length(1)
-        .max_length(120);
-    let reason_label = CreateLabel::input_text("Reason", reason_input);
 
     let modal = CreateModal::new(
-        format!("review_player_modal:{tag_type}:{submitter_id}"),
+        format!("review_addplayer_name:{submitter_id}"),
         "Add Player",
     )
-    .components(vec![
-        CreateModalComponent::Label(player_label),
-        CreateModalComponent::Label(reason_label),
-    ]);
+    .components(vec![CreateModalComponent::Label(
+        CreateLabel::input_text("Player Name", input),
+    )]);
 
     component
         .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
@@ -926,47 +1166,19 @@ pub async fn handle_tag_select_add(
     Ok(())
 }
 
-pub async fn handle_player_modal(
+pub async fn handle_addplayer_name_modal(
     ctx: &Context,
     modal: &ModalInteraction,
     data: &Data,
 ) -> Result<()> {
     modal.defer_ephemeral(&ctx.http).await?;
 
-    let custom_id = modal
-        .data
-        .custom_id
-        .strip_prefix("review_player_modal:")
-        .unwrap_or("");
-    let tag_type = custom_id.split(':').next().unwrap_or("").to_string();
-    if lookup_tag(&tag_type).is_none() {
-        modal
-            .edit_response(
-                &ctx.http,
-                serenity::all::EditInteractionResponse::new()
-                    .content(format!("Unknown tag type: `{}`", tag_type)),
-            )
-            .await?;
-        return Ok(());
-    }
-
     let player_name = extract_modal_value(modal, "player");
-    let reason = extract_modal_value(modal, "reason");
 
     let (resolved_name, resolved_uuid, is_nicked) = match data.api.resolve(&player_name).await {
         Ok(info) => (info.username, info.uuid, false),
         Err(_) => (player_name, String::new(), true),
     };
-
-    if resolved_uuid.is_empty() && !is_nicked {
-        modal
-            .edit_response(
-                &ctx.http,
-                serenity::all::EditInteractionResponse::new().content("Player not found"),
-            )
-            .await?;
-        return Ok(());
-    }
 
     let channel_id = modal.channel_id;
 
@@ -1005,19 +1217,149 @@ pub async fn handle_player_modal(
             .edit_response(
                 &ctx.http,
                 serenity::all::EditInteractionResponse::new()
-                    .content(format!("`{}` is already in this submission", resolved_name)),
+                    .content(format!("`{resolved_name}` is already in this submission")),
             )
             .await?;
         return Ok(());
     }
 
-    let new_player = PlayerEntry {
+    let identifier = if is_nicked {
+        resolved_name.clone()
+    } else {
+        resolved_uuid.clone()
+    };
+
+    state.pending_add = Some(PendingAdd {
+        identifier,
         username: resolved_name,
-        uuid: if is_nicked {
-            String::new()
-        } else {
-            resolved_uuid.clone()
-        },
+        is_nicked,
+    });
+
+    update_builder(ctx, channel_id, &builder_msg, &state).await?;
+    let _ = modal.delete_response(&ctx.http).await;
+
+    Ok(())
+}
+
+pub async fn handle_pending_tag_select(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    _data: &Data,
+) -> Result<()> {
+    if !require_submitter(ctx, component).await? {
+        return Ok(());
+    }
+
+    let tag_type = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => {
+            values.first().map(|s| s.as_str()).unwrap_or("")
+        }
+        _ => return Ok(()),
+    };
+
+    if lookup_tag(tag_type).is_none() {
+        return Ok(());
+    }
+
+    let custom_id = component
+        .data
+        .custom_id
+        .strip_prefix("review_pending_tag:")
+        .unwrap_or("");
+    let parts: Vec<&str> = custom_id.rsplitn(3, ':').collect();
+    let submitter_id = parts.first().unwrap_or(&"0");
+    let nicked = parts.get(1).unwrap_or(&"0");
+    let identifier = parts.get(2).unwrap_or(&"");
+
+    let reason_input = CreateInputText::new(InputTextStyle::Short, "reason")
+        .placeholder("Reason for this tag")
+        .min_length(1)
+        .max_length(120);
+
+    let modal = CreateModal::new(
+        format!("review_addplayer_reason:{identifier}:{tag_type}:{nicked}:{submitter_id}"),
+        "Add Player \u{2014} Reason",
+    )
+    .components(vec![CreateModalComponent::Label(
+        CreateLabel::input_text("Reason", reason_input),
+    )]);
+
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
+        .await?;
+
+    Ok(())
+}
+
+pub async fn handle_addplayer_reason_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    data: &Data,
+) -> Result<()> {
+    modal.defer_ephemeral(&ctx.http).await?;
+
+    let custom_id = modal
+        .data
+        .custom_id
+        .strip_prefix("review_addplayer_reason:")
+        .unwrap_or("");
+    let parts: Vec<&str> = custom_id.rsplitn(4, ':').collect();
+    let is_nicked = parts.get(1).map(|s| *s == "1").unwrap_or(false);
+    let tag_type = parts.get(2).unwrap_or(&"").to_string();
+    let identifier = parts.get(3).unwrap_or(&"").to_string();
+
+    if lookup_tag(&tag_type).is_none() {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content(format!("Unknown tag type: `{tag_type}`")),
+            )
+            .await?;
+        return Ok(());
+    }
+
+    let reason = extract_modal_value(modal, "reason");
+
+    let (username, uuid) = if is_nicked {
+        (identifier.clone(), String::new())
+    } else {
+        let name = data
+            .api
+            .resolve(&identifier)
+            .await
+            .map(|r| r.username)
+            .unwrap_or_else(|_| identifier.clone());
+        (name, identifier.clone())
+    };
+
+    let channel_id = modal.channel_id;
+
+    let Some(builder_msg) = find_builder_message(ctx, channel_id).await else {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content("Could not find the submission message"),
+            )
+            .await?;
+        return Ok(());
+    };
+
+    let Some(mut state) = parse_state_from_message(&builder_msg) else {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content("Could not parse submission state"),
+            )
+            .await?;
+        return Ok(());
+    };
+
+    state.players.push(PlayerEntry {
+        username,
+        uuid,
         tag_type,
         reason,
         is_nicked,
@@ -1028,9 +1370,7 @@ pub async fn handle_player_modal(
         conflict_warning: None,
         accept_votes: Vec::new(),
         reject_votes: Vec::new(),
-    };
-
-    state.players.push(new_player);
+    });
 
     update_builder(ctx, channel_id, &builder_msg, &state).await?;
 
@@ -1057,17 +1397,7 @@ pub async fn handle_add_replay(
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
@@ -1168,6 +1498,24 @@ pub async fn handle_replay_modal(
         return Ok(());
     };
 
+    let duplicate = player.evidence.iter().any(|e| match e {
+        Evidence::Replay { replay: r, .. } => {
+            r.id == replay.id && r.timestamp == replay.timestamp
+        }
+        _ => false,
+    });
+
+    if duplicate {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content("This replay has already been added"),
+            )
+            .await?;
+        return Ok(());
+    }
+
     let note = if note.is_empty() { None } else { Some(note) };
     player.evidence.push(Evidence::Replay { replay, note });
 
@@ -1178,151 +1526,105 @@ pub async fn handle_replay_modal(
     Ok(())
 }
 
-pub async fn handle_add_attachment(
+pub async fn handle_attach_media(
     ctx: &Context,
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
-    let (player_idx, _) = parse_component_ids(&component.data.custom_id);
+    let (player_idx, submitter_id) = parse_component_ids(&component.data.custom_id);
 
-    let builder_msg = get_builder_message(component);
-    let player_name = parse_state_from_message(&builder_msg)
-        .and_then(|s| s.players.get(player_idx).map(|p| p.username.clone()))
-        .unwrap_or_default();
+    let modal_id = format!("review_media_modal:{player_idx}:{submitter_id}");
 
-    let submitter_id = parse_submitter_id(&component.data.custom_id).unwrap_or(0);
+    let upload = CreateFileUpload::new("evidence")
+        .max_values(MAX_MEDIA_PER_PLAYER as u8)
+        .required(true);
 
-    let container = CreateContainer::new(vec![
-        text(format!(
-            "Upload media evidence for **`{}`** in this thread.",
-            player_name
-        )),
-        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
-            vec![
-                CreateButton::new(format!(
-                    "review_cancel_attachment:{player_idx}:{submitter_id}"
-                ))
-                .label("Cancel")
-                .style(ButtonStyle::Secondary),
-            ]
-            .into(),
+    let modal = CreateModal::new(modal_id, "Upload Evidence").components(vec![
+        CreateModalComponent::Label(CreateLabel::file_upload(
+            "Evidence screenshots or clips",
+            upload,
         )),
     ]);
 
     component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(vec![CreateComponent::Container(container)]),
-            ),
-        )
+        .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
         .await?;
 
     Ok(())
 }
 
-pub async fn handle_cancel_attachment(
+pub async fn handle_media_modal(
     ctx: &Context,
-    component: &ComponentInteraction,
+    modal: &ModalInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    modal.defer_ephemeral(&ctx.http).await?;
+
+    let custom_id = modal
+        .data
+        .custom_id
+        .strip_prefix("review_media_modal:")
+        .unwrap_or("");
+    let player_idx: usize = custom_id
+        .split(':')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let upload_ids: Vec<AttachmentId> = modal
+        .data
+        .components
+        .iter()
+        .filter_map(|c| match c {
+            Component::Label(label) => match &label.component {
+                LabelComponent::FileUpload(fu) => Some(fu.values.iter().copied()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .flatten()
+        .collect();
+
+    if upload_ids.is_empty() {
+        let _ = modal.delete_response(&ctx.http).await;
         return Ok(());
     }
 
-    let message = component.message.clone();
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await?;
-    let _ = message.delete(&ctx.http, None).await;
-    Ok(())
-}
-
-fn collect_attachment_urls(message: &Message) -> Vec<(String, String)> {
-    let direct = message
-        .attachments
-        .iter()
-        .map(|a| (a.url.to_string(), a.filename.to_string()));
-
-    let forwarded = message
-        .message_snapshots
-        .iter()
-        .flat_map(|s| s.attachments.iter())
-        .map(|a| (a.url.to_string(), a.filename.to_string()));
-
-    direct.chain(forwarded).collect()
-}
-
-pub async fn handle_attachment_message(
-    ctx: &Context,
-    message: &Message,
-    _data: &Data,
-) -> Result<()> {
-    let attachments = collect_attachment_urls(message);
-    if attachments.is_empty() {
-        return Ok(());
-    }
-
-    let channel_id = message.channel_id;
+    let channel_id = modal.channel_id;
 
     let Some(builder_msg) = find_builder_message(ctx, channel_id).await else {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content("Could not find the submission message"),
+            )
+            .await?;
         return Ok(());
     };
 
     let Some(mut state) = parse_state_from_message(&builder_msg) else {
-        return Ok(());
-    };
-
-    if state.submitted {
-        return Ok(());
-    }
-
-    if message.author.id.get() != state.submitter_id {
-        return Ok(());
-    }
-
-    let messages = ctx
-        .http
-        .get_messages(channel_id, None, None)
-        .await
-        .unwrap_or_default();
-
-    let Some((player_idx, prompt_msg_id)) = messages.iter().find_map(|m| {
-        if !m.author.bot() {
-            return None;
-        }
-        extract_attachment_prompt_idx(m).map(|idx| (idx, m.id))
-    }) else {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content("Could not parse submission state"),
+            )
+            .await?;
         return Ok(());
     };
 
     let Some(player) = state.players.get_mut(player_idx) else {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new().content("Player not found"),
+            )
+            .await?;
         return Ok(());
     };
 
@@ -1331,44 +1633,49 @@ pub async fn handle_attachment_message(
         .iter()
         .filter(|e| matches!(e, Evidence::Attachment { .. }))
         .count();
-
     let remaining = MAX_MEDIA_PER_PLAYER.saturating_sub(existing_count);
-    if remaining == 0 {
-        let _ = send_thread_message(
-            ctx,
-            channel_id,
-            &format!(
-                "Maximum of {} media attachments per player reached.",
-                MAX_MEDIA_PER_PLAYER
-            ),
-        )
-        .await;
-        let _ = message.delete(&ctx.http, None).await;
-        let _ = ctx
-            .http
-            .delete_message(channel_id, prompt_msg_id, None)
-            .await;
-        return Ok(());
-    }
 
     let mut files = Vec::new();
-    for (i, (url, orig_filename)) in attachments.iter().take(remaining).enumerate() {
-        let ext = orig_filename.rsplit('.').next().unwrap_or("png");
+    let mut rejected = 0usize;
+    for (i, att_id) in upload_ids.iter().take(remaining).enumerate() {
+        let Some(attachment) = modal.data.resolved.attachments.get(att_id) else {
+            continue;
+        };
+
+        let ext = attachment
+            .filename
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        if !ALLOWED_MEDIA_EXTENSIONS.contains(&ext.as_str()) {
+            rejected += 1;
+            continue;
+        }
+
         let filename = format!("{}_{}.{}", player.username, existing_count + i + 1, ext);
-        let att = CreateAttachment::url(&ctx.http, url.as_str(), filename.clone()).await?;
+        let att =
+            CreateAttachment::url(&ctx.http, attachment.url.as_str(), filename.clone()).await?;
         files.push(att);
         player.evidence.push(Evidence::Attachment {
-            url: format!("attachment://{filename}"),
+            filename: filename.clone(),
         });
     }
 
-    update_builder_with_files(ctx, channel_id, &builder_msg, &state, files).await?;
+    if files.is_empty() && rejected > 0 {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content("Only images and videos are accepted (png, jpg, gif, webp, mp4, webm, mov)"),
+            )
+            .await?;
+        return Ok(());
+    }
 
-    let _ = message.delete(&ctx.http, None).await;
-    let _ = ctx
-        .http
-        .delete_message(channel_id, prompt_msg_id, None)
-        .await;
+    update_builder_with_files(ctx, channel_id, &builder_msg, &state, files).await?;
+    let _ = modal.delete_response(&ctx.http).await;
 
     Ok(())
 }
@@ -1378,17 +1685,7 @@ pub async fn handle_remove_player(
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
@@ -1416,28 +1713,109 @@ pub async fn handle_remove_player(
     Ok(())
 }
 
+pub async fn handle_edit_evidence(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    _data: &Data,
+) -> Result<()> {
+    if !require_submitter(ctx, component).await? {
+        return Ok(());
+    }
+
+    let (player_idx, _) = parse_component_ids(&component.data.custom_id);
+
+    let message = *component.message.clone();
+    let Some(state) = parse_state_from_message(&message) else {
+        return Ok(());
+    };
+
+    let Some(player) = state.players.get(player_idx) else {
+        return Ok(());
+    };
+
+    let panel = build_evidence_panel(player, player_idx, state.submitter_id);
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::EPHEMERAL | MessageFlags::IS_COMPONENTS_V2)
+                    .components(panel),
+            ),
+        )
+        .await?;
+
+    Ok(())
+}
+
+fn build_evidence_panel(
+    player: &PlayerEntry,
+    player_idx: usize,
+    submitter_id: u64,
+) -> Vec<CreateComponent<'static>> {
+    if player.evidence.is_empty() {
+        return vec![CreateComponent::Container(CreateContainer::new(vec![text(
+            format!("**Evidence for `{}`**\n-# No evidence added", player.username),
+        )]))];
+    }
+
+    let summary: String = player
+        .evidence
+        .iter()
+        .map(|e| match e {
+            Evidence::Replay { replay, note } => render_replay_line(replay, note.as_deref()),
+            Evidence::Attachment { filename } => format!("📎 {filename}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let options: Vec<CreateSelectMenuOption<'static>> = player
+        .evidence
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let label = match e {
+                Evidence::Replay { replay, .. } => replay.format_command(),
+                Evidence::Attachment { filename } => filename.clone(),
+            };
+            CreateSelectMenuOption::new(label, i.to_string())
+        })
+        .collect();
+
+    let parts = vec![
+        text(format!("**Evidence for `{}`**\n{summary}", player.username)),
+        CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
+            CreateSelectMenu::new(
+                format!("review_remove_evidence:{player_idx}:{submitter_id}"),
+                CreateSelectMenuKind::String {
+                    options: options.into(),
+                },
+            )
+            .placeholder("Remove evidence..."),
+        )),
+    ];
+
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
 pub async fn handle_remove_evidence(
     ctx: &Context,
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
-    let parts: Vec<&str> = component.data.custom_id.split(':').collect();
-    let player_idx: usize = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let ev_idx: usize = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let (player_idx, _) = parse_component_ids(&component.data.custom_id);
+
+    let ev_idx: usize = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => {
+            values.first().and_then(|v| v.parse().ok()).unwrap_or(0)
+        }
+        _ => return Ok(()),
+    };
 
     let channel_id = component.channel_id;
     let Some(builder_msg) = find_builder_message(ctx, channel_id).await else {
@@ -1454,11 +1832,78 @@ pub async fn handle_remove_evidence(
         }
     }
 
+    let panel = state
+        .players
+        .get(player_idx)
+        .map(|p| build_evidence_panel(p, player_idx, state.submitter_id))
+        .unwrap_or_default();
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::EPHEMERAL | MessageFlags::IS_COMPONENTS_V2)
+                    .components(panel),
+            ),
+        )
+        .await?;
+
+    update_builder(ctx, channel_id, &builder_msg, &state).await?;
+
+    Ok(())
+}
+
+pub async fn handle_edit_tag(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    _data: &Data,
+) -> Result<()> {
+    if !require_submitter(ctx, component).await? {
+        return Ok(());
+    }
+
+    let (player_idx, _) = parse_component_ids(&component.data.custom_id);
+
+    let Some(message) = find_builder_message(ctx, component.channel_id).await else {
+        return Ok(());
+    };
+    let Some(mut state) = parse_state_from_message(&message) else {
+        return Ok(());
+    };
+
+    state.editing = Some(player_idx);
+
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
 
-    update_builder(ctx, channel_id, &builder_msg, &state).await?;
+    update_builder(ctx, component.channel_id, &message, &state).await?;
+
+    Ok(())
+}
+
+pub async fn handle_edit_done(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    _data: &Data,
+) -> Result<()> {
+    if !require_submitter(ctx, component).await? {
+        return Ok(());
+    }
+
+    let Some(message) = find_builder_message(ctx, component.channel_id).await else {
+        return Ok(());
+    };
+    let Some(state) = parse_state_from_message(&message) else {
+        return Ok(());
+    };
+
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+
+    update_builder(ctx, component.channel_id, &message, &state).await?;
 
     Ok(())
 }
@@ -1468,17 +1913,7 @@ pub async fn handle_tag_select_edit(
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
@@ -1495,7 +1930,7 @@ pub async fn handle_tag_select_edit(
 
     let (player_idx, submitter_id) = parse_component_ids(&component.data.custom_id);
 
-    let message = get_builder_message(component);
+    let message = *component.message.clone();
     let current_reason = parse_state_from_message(&message)
         .and_then(|s| s.players.get(player_idx).map(|p| p.reason.clone()))
         .unwrap_or_default();
@@ -1597,21 +2032,13 @@ pub async fn handle_edit_submitted(
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can edit")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
-    let message = get_builder_message(component);
+    let Some(message) = find_builder_message(ctx, component.channel_id).await else {
+        return Ok(());
+    };
     let Some(mut state) = parse_state_from_message(&message) else {
         return Ok(());
     };
@@ -1622,7 +2049,6 @@ pub async fn handle_edit_submitted(
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
 
-    let message = get_builder_message(component);
     update_builder(ctx, component.channel_id, &message, &state).await?;
 
     Ok(())
@@ -1633,21 +2059,13 @@ pub async fn handle_submit(
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
-    let message = get_builder_message(component);
+    let Some(message) = find_builder_message(ctx, component.channel_id).await else {
+        return Ok(());
+    };
     let Some(mut state) = parse_state_from_message(&message) else {
         component
             .create_response(
@@ -1707,7 +2125,6 @@ pub async fn handle_submit(
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
 
-    let message = get_builder_message(component);
     update_builder(ctx, component.channel_id, &message, &state).await?;
 
     let tags = resolve_forum_tags(ctx, data).await;
@@ -1749,7 +2166,9 @@ pub async fn handle_approve(
         return send_vote_error(ctx, component, "You cannot review your own submission").await;
     }
 
-    let message = get_builder_message(component);
+    let Some(message) = find_builder_message(ctx, component.channel_id).await else {
+        return Ok(());
+    };
     let Some(mut state) = parse_state_from_message(&message) else {
         return Ok(());
     };
@@ -1785,22 +2204,19 @@ pub async fn handle_approve(
                 player.reject_votes.len(),
             );
 
-            let components = build_review_message(&state);
             component
-                .create_response(
-                    &ctx.http,
-                    CreateInteractionResponse::UpdateMessage(
-                        CreateInteractionResponseMessage::new()
-                            .flags(MessageFlags::IS_COMPONENTS_V2)
-                            .components(components),
-                    ),
-                )
+                .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
                 .await?;
 
-            let channel_id = component.channel_id;
+            update_builder(ctx, component.channel_id, &message, &state).await?;
+
             let _ = ctx
                 .http
-                .send_message(channel_id.into(), Vec::<CreateAttachment>::new(), &vote_msg)
+                .send_message(
+                    component.channel_id.into(),
+                    Vec::<CreateAttachment>::new(),
+                    &vote_msg,
+                )
                 .await;
 
             return Ok(());
@@ -1813,14 +2229,7 @@ pub async fn handle_approve(
     let player_username = player.username.clone();
     let player_reason = player.reason.clone();
 
-    let media_urls: Vec<String> = player
-        .evidence
-        .iter()
-        .filter_map(|e| match e {
-            Evidence::Attachment { url, .. } => Some(url.clone()),
-            _ => None,
-        })
-        .collect();
+    let media_urls: Vec<String> = extract_media_urls_from_message(&message, player_index);
 
     let repo = BlacklistRepository::new(data.db.pool());
     let reviewed_by: Vec<i64> = if is_staff {
@@ -1934,17 +2343,11 @@ pub async fn handle_approve(
         0,
     );
 
-    let components = build_review_message(&state);
     component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(components),
-            ),
-        )
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
+
+    update_builder(ctx, component.channel_id, &message, &state).await?;
 
     let channel_id = component.channel_id;
     if is_staff {
@@ -1970,16 +2373,6 @@ pub async fn handle_approve(
             .send_message(channel_id.into(), Vec::<CreateAttachment>::new(), &vote_msg)
             .await;
     }
-
-    let _ = send_thread_message(
-        ctx,
-        channel_id,
-        &format!(
-            "<@{}> Your tag for `{}` has been **approved**",
-            submitter_id, player_username
-        ),
-    )
-    .await;
 
     let thread_id = component.channel_id.expect_thread();
     check_all_resolved(ctx, data, thread_id, &state).await?;
@@ -2030,7 +2423,9 @@ pub async fn handle_reject(
         return Ok(());
     }
 
-    let message = get_builder_message(component);
+    let Some(message) = find_builder_message(ctx, component.channel_id).await else {
+        return Ok(());
+    };
     let Some(mut state) = parse_state_from_message(&message) else {
         return Ok(());
     };
@@ -2063,22 +2458,19 @@ pub async fn handle_reject(
             player.reject_votes.len(),
         );
 
-        let components = build_review_message(&state);
         component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::UpdateMessage(
-                    CreateInteractionResponseMessage::new()
-                        .flags(MessageFlags::IS_COMPONENTS_V2)
-                        .components(components),
-                ),
-            )
+            .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
             .await?;
 
-        let channel_id = component.channel_id;
+        update_builder(ctx, component.channel_id, &message, &state).await?;
+
         let _ = ctx
             .http
-            .send_message(channel_id.into(), Vec::<CreateAttachment>::new(), &vote_msg)
+            .send_message(
+                component.channel_id.into(),
+                Vec::<CreateAttachment>::new(),
+                &vote_msg,
+            )
             .await;
 
         return Ok(());
@@ -2115,33 +2507,20 @@ pub async fn handle_reject(
     state.players[player_index].accept_votes.clear();
     state.players[player_index].reject_votes.clear();
 
-    let components = build_review_message(&state);
     component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(components),
-            ),
-        )
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
 
-    let channel_id = component.channel_id;
+    update_builder(ctx, component.channel_id, &message, &state).await?;
+
     let _ = ctx
         .http
-        .send_message(channel_id.into(), Vec::<CreateAttachment>::new(), &vote_msg)
+        .send_message(
+            component.channel_id.into(),
+            Vec::<CreateAttachment>::new(),
+            &vote_msg,
+        )
         .await;
-
-    let _ = send_thread_message(
-        ctx,
-        channel_id,
-        &format!(
-            "<@{}> Your tag for `{}` has been **rejected**",
-            submitter_id, player_username
-        ),
-    )
-    .await;
 
     let thread_id = component.channel_id.expect_thread();
     check_all_resolved(ctx, data, thread_id, &state).await?;
@@ -2234,16 +2613,6 @@ pub async fn handle_reject_modal(
         .send_message(channel_id.into(), Vec::<CreateAttachment>::new(), &vote_msg)
         .await;
 
-    let _ = send_thread_message(
-        ctx,
-        channel_id,
-        &format!(
-            "<@{}> Your tag for `{}` has been **rejected**: \"{}\"",
-            submitter_id, player_username, reason
-        ),
-    )
-    .await;
-
     modal
         .edit_response(
             &ctx.http,
@@ -2306,12 +2675,20 @@ async fn check_all_resolved(
     let _ = set_forum_tags(ctx, thread_id, &tag_ids).await;
 
     let channel_id: GenericChannelId = thread_id.into();
-    let _ = send_thread_message(
-        ctx,
-        channel_id,
-        "All players have been reviewed. This thread is now closed.",
-    )
-    .await;
+
+    let mut summary = format!("<@{}> All players have been reviewed:\n", state.submitter_id);
+    for player in &state.players {
+        let def = lookup_tag(&player.tag_type);
+        let emote = def.map(|d| d.emote).unwrap_or("");
+        let verdict = match player.status {
+            PlayerStatus::Approved => "approved",
+            PlayerStatus::Rejected => "rejected",
+            PlayerStatus::Pending => "pending",
+        };
+        summary.push_str(&format!("- {emote} `{}` \u{2014} **{verdict}**\n", player.username));
+    }
+
+    let _ = send_thread_message(ctx, channel_id, &summary).await;
 
     let _ = thread_id
         .edit(&ctx.http, EditThread::new().archived(true).locked(true))
@@ -2518,17 +2895,7 @@ pub async fn handle_cancel_thread(
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
@@ -2580,17 +2947,7 @@ pub async fn handle_abort_delete(
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    if !verify_submitter(component, &component.data.custom_id) {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Only the submission creator can use these buttons")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+    if !require_submitter(ctx, component).await? {
         return Ok(());
     }
 
@@ -2627,7 +2984,10 @@ pub fn spawn_submission_timeout(ctx: Context, thread_id: ThreadId) {
         let _ = send_thread_message(
             &ctx,
             channel_id,
-            "This submission will be automatically cancelled in 10 minutes due to inactivity.",
+            &format!(
+                "<@{}> This submission will be automatically cancelled in 10 minutes due to inactivity.",
+                state.submitter_id
+            ),
         )
         .await;
 

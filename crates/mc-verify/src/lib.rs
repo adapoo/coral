@@ -9,7 +9,6 @@ use std::sync::Arc;
 use base64::Engine;
 use connection::ServerState;
 use encryption::ServerKey;
-use redis::aio::ConnectionManager;
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -20,15 +19,17 @@ type FormatFn = Box<dyn Fn(&str) -> String + Send + Sync>;
 
 pub struct VerifyServer {
     address: String,
-    redis: ConnectionManager,
+    api_url: String,
+    api_key: String,
     disconnect_message: Option<FormatFn>,
 }
 
 impl VerifyServer {
-    pub fn new(address: impl Into<String>, redis: ConnectionManager) -> Self {
+    pub fn new(address: impl Into<String>, api_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             address: address.into(),
-            redis,
+            api_url: api_url.into(),
+            api_key: api_key.into(),
             disconnect_message: None,
         }
     }
@@ -43,10 +44,11 @@ impl VerifyServer {
 
     pub async fn start(self) -> std::io::Result<()> {
         info!("generating RSA keypair...");
+        let http = reqwest::Client::new();
         let state = Arc::new(ServerState {
             key: ServerKey::generate(),
-            http: reqwest::Client::new(),
-            codes: codes::CodeStore::new(self.redis),
+            codes: codes::CodeStore::new(http.clone(), self.api_url, self.api_key),
+            http,
             motd: DEFAULT_MOTD.into(),
             server_icon: Some(base64::engine::general_purpose::STANDARD.encode(DEFAULT_ICON_PNG)),
             format_disconnect: self.disconnect_message.unwrap_or_else(|| {

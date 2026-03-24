@@ -10,6 +10,7 @@ mod guild;
 mod player;
 mod resolve;
 mod tags;
+mod verify;
 
 pub fn router(state: AppState) -> Router<AppState> {
     let public_routes = Router::new()
@@ -25,6 +26,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(player::internal_router())
         .merge(guild::router())
         .merge(resolve::router())
+        .merge(verify::router())
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_internal_or_admin,

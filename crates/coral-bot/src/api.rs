@@ -103,6 +103,17 @@ impl CoralApiClient {
         self.get(&url).await
     }
 
+    pub async fn redeem_verify_code(&self, code: &str) -> Result<ResolveResponse, ApiError> {
+        let url = format!("{}/v1/verify/codes/{}", self.base_url, code);
+        let response = self
+            .http
+            .delete(&url)
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await?;
+        Self::parse_response(response).await
+    }
+
     async fn get<T: DeserializeOwned>(&self, url: &str) -> Result<T, ApiError> {
         let response = self
             .http

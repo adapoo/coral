@@ -1,15 +1,18 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use blacklist::lookup as lookup_tag;
 use database::BlacklistRepository;
 use serenity::all::{
-    ButtonStyle, CommandInteraction, CommandOptionType, Component, ComponentInteraction,
-    ComponentInteractionDataKind, Context, CreateActionRow, CreateAttachment, CreateButton,
-    CreateCommand, CreateCommandOption, CreateComponent, CreateContainer, CreateContainerComponent,
-    CreateForumPost, CreateInteractionResponse, CreateInteractionResponseMessage,
-    CreateMediaGallery, CreateMediaGalleryItem, CreateMessage, CreateSelectMenu,
+    AttachmentId, ButtonStyle, CommandInteraction, CommandOptionType, Component,
+    ComponentInteraction, ComponentInteractionDataKind, Context, CreateActionRow,
+    CreateAttachment, CreateButton, CreateCommand, CreateCommandOption, CreateComponent,
+    CreateContainer, CreateContainerComponent, CreateFileUpload, CreateForumPost,
+    CreateInteractionResponse, CreateInteractionResponseMessage, CreateLabel, CreateMediaGallery,
+    CreateMediaGalleryItem, CreateMessage, CreateModal, CreateModalComponent, CreateSelectMenu,
     CreateSelectMenuKind, CreateSelectMenuOption, CreateTextDisplay, CreateUnfurledMediaItem,
-    EditAttachments, EditInteractionResponse, EditMessage, EditThread, Message, MessageFlags,
-    MessageId, ResolvedValue, ThreadId,
+    EditAttachments, EditInteractionResponse, EditMessage, EditThread, LabelComponent, Message,
+    MessageFlags, MessageId, ModalInteraction, ResolvedValue, ThreadId,
 };
 
 use super::channel::COLOR_DANGER;
@@ -19,6 +22,9 @@ use crate::utils::{format_uuid_dashed, separator, text};
 use coral_redis::BlacklistEvent;
 
 const QUALIFYING_TAGS: &[&str] = &["closet_cheater", "blatant_cheater", "confirmed_cheater"];
+const ALLOWED_MEDIA_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov",
+];
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("confirm")
@@ -104,6 +110,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         &original_type,
         &[],
         None,
+        &HashMap::new(),
     );
 
     let forum_post = CreateForumPost::new(
@@ -160,6 +167,43 @@ struct EvidenceState {
     review_url: Option<String>,
 }
 
+fn gallery_url_map(message: &Message) -> HashMap<String, String> {
+    let Some(container) = message.components.iter().find_map(|c| match c {
+        Component::Container(c) => Some(c),
+        _ => None,
+    }) else {
+        return HashMap::new();
+    };
+
+    let mut map = HashMap::new();
+    for part in &*container.components {
+        if let serenity::all::ContainerComponent::MediaGallery(gallery) = part {
+            for item in &*gallery.items {
+                let url = item.media.url.to_string();
+                if !url.starts_with("attachment://") {
+                    let filename = url
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("unknown.png")
+                        .split('?')
+                        .next()
+                        .unwrap_or("unknown.png")
+                        .to_string();
+                    map.insert(filename, url);
+                }
+            }
+        }
+    }
+    map
+}
+
+fn attachment_id_from_cdn_url(url: &str) -> Option<AttachmentId> {
+    let path = url.split("/attachments/").nth(1)?;
+    let id_str = path.split('/').nth(1)?;
+    let id_str = id_str.split('?').next().unwrap_or(id_str);
+    id_str.parse::<u64>().ok().map(AttachmentId::new)
+}
+
 fn url_extension(url: &str) -> &str {
     url.rsplit('/')
         .next()
@@ -178,6 +222,7 @@ fn build_evidence_message(
     original_type: &str,
     evidence: &[EvidenceItem],
     review_thread_url: Option<&str>,
+    gallery_urls: &HashMap<String, String>,
 ) -> Vec<CreateComponent<'static>> {
     let confirmed_def = lookup_tag("confirmed_cheater");
     let emote = confirmed_def.map(|d| d.emote).unwrap_or("");
@@ -205,7 +250,10 @@ fn build_evidence_message(
         let gallery_items: Vec<CreateMediaGalleryItem<'static>> = evidence
             .iter()
             .map(|e| {
-                let url = format!("attachment://{}", e.filename);
+                let url = gallery_urls
+                    .get(&e.filename)
+                    .cloned()
+                    .unwrap_or_else(|| format!("attachment://{}", e.filename));
                 CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url))
             })
             .collect();
@@ -258,6 +306,7 @@ fn build_evidence_message(
 fn build_archived_evidence_message(
     state: &EvidenceState,
     reverted_display: &str,
+    gallery_urls: &HashMap<String, String>,
 ) -> Vec<CreateComponent<'static>> {
     let confirmed_def = lookup_tag("confirmed_cheater");
     let emote = confirmed_def.map(|d| d.emote).unwrap_or("");
@@ -281,7 +330,10 @@ fn build_archived_evidence_message(
             .evidence
             .iter()
             .map(|e| {
-                let url = format!("attachment://{}", e.filename);
+                let url = gallery_urls
+                    .get(&e.filename)
+                    .cloned()
+                    .unwrap_or_else(|| format!("attachment://{}", e.filename));
                 CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url))
             })
             .collect();
@@ -375,78 +427,175 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
     })
 }
 
-fn find_upload_prompt(message: &Message) -> bool {
-    for component in &message.components {
-        let Component::Container(container) = component else {
-            continue;
-        };
-        for part in &container.components {
-            let serenity::all::ContainerComponent::ActionRow(row) = part else {
-                continue;
-            };
-            for item in &row.components {
-                if let serenity::all::ActionRowComponent::Button(btn) = item {
-                    if let serenity::all::ButtonKind::NonLink { custom_id, .. } = &btn.data {
-                        if custom_id.as_str() == "evidence_cancel_upload" {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    false
-}
+const MAX_EVIDENCE_MEDIA: u8 = 10;
 
 pub async fn handle_add_media(
     ctx: &Context,
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    let state = parse_state_from_message(&*component.message);
-    let username = state
-        .as_ref()
-        .map(|s| s.username.clone())
-        .unwrap_or_default();
+    let upload = CreateFileUpload::new("evidence")
+        .max_values(MAX_EVIDENCE_MEDIA)
+        .required(true);
 
-    let container = CreateContainer::new(vec![
-        text(format!(
-            "Upload media evidence for **`{username}`** in this thread."
-        )),
-        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
-            vec![
-                CreateButton::new("evidence_cancel_upload")
-                    .label("Cancel")
-                    .style(ButtonStyle::Secondary),
-            ]
-            .into(),
-        )),
-    ]);
+    let modal = CreateModal::new("evidence_media_modal", "Upload Evidence")
+        .components(vec![CreateModalComponent::Label(
+            CreateLabel::file_upload("Evidence screenshots or clips", upload),
+        )]);
 
     component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(vec![CreateComponent::Container(container)]),
-            ),
-        )
+        .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
         .await?;
 
     Ok(())
 }
 
-pub async fn handle_cancel_upload(
+pub async fn handle_media_modal(
     ctx: &Context,
-    component: &ComponentInteraction,
-    _data: &Data,
+    modal: &ModalInteraction,
+    data: &Data,
 ) -> Result<()> {
-    let message = component.message.clone();
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+    modal.defer_ephemeral(&ctx.http).await?;
+
+    let attachment_ids: Vec<AttachmentId> = modal
+        .data
+        .components
+        .iter()
+        .filter_map(|c| match c {
+            Component::Label(label) => match &label.component {
+                LabelComponent::FileUpload(fu) => Some(fu.values.iter().copied()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .flatten()
+        .collect();
+
+    if attachment_ids.is_empty() {
+        let _ = modal.delete_response(&ctx.http).await;
+        return Ok(());
+    }
+
+    let channel_id = modal.channel_id;
+    let builder_msg_id = MessageId::new(channel_id.get());
+    let Ok(builder_msg) = ctx
+        .http
+        .get_message(channel_id.into(), builder_msg_id)
+        .await
+    else {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content("Could not find the evidence message"),
+            )
+            .await?;
+        return Ok(());
+    };
+
+    let Some(mut state) = parse_state_from_message(&builder_msg) else {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content("Could not parse evidence state"),
+            )
+            .await?;
+        return Ok(());
+    };
+
+    let existing_count = state.evidence.len();
+    let mut files = Vec::new();
+    let mut rejected = 0usize;
+
+    for (i, att_id) in attachment_ids.iter().enumerate() {
+        let Some(attachment) = modal.data.resolved.attachments.get(att_id) else {
+            continue;
+        };
+
+        let ext = url_extension(&attachment.filename).to_ascii_lowercase();
+        if !ALLOWED_MEDIA_EXTENSIONS.contains(&ext.as_str()) {
+            rejected += 1;
+            continue;
+        }
+
+        let filename = format!("{}_{}.{}", state.username, existing_count + i + 1, ext);
+        let att =
+            CreateAttachment::url(&ctx.http, attachment.url.as_str(), filename.clone()).await?;
+        files.push(att);
+        state.evidence.push(EvidenceItem {
+            filename: filename.clone(),
+        });
+    }
+
+    if files.is_empty() && rejected > 0 {
+        modal
+            .edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new()
+                    .content("Only images and videos are accepted (png, jpg, gif, webp, mp4, webm, mov)"),
+            )
+            .await?;
+        return Ok(());
+    }
+
+    let urls = gallery_url_map(&builder_msg);
+    let components = build_evidence_message(
+        &state.username,
+        &state.uuid,
+        &state.original_type,
+        &state.evidence,
+        state.review_url.as_deref(),
+        &urls,
+    );
+
+    let mut attachments = EditAttachments::new();
+    for url in urls.values() {
+        if let Some(id) = attachment_id_from_cdn_url(url) {
+            attachments = attachments.keep(id);
+        }
+    }
+    for f in files.iter().cloned() {
+        attachments = attachments.add(f);
+    }
+
+    let edit = EditMessage::new()
+        .content("")
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(components)
+        .attachments(attachments);
+
+    ctx.http
+        .edit_message(channel_id.into(), builder_msg.id, &edit, files)
         .await?;
-    let _ = message.delete(&ctx.http, None).await;
+
+    if existing_count == 0
+        && !state.original_type.is_empty()
+        && state.original_type != "confirmed_cheater"
+    {
+        let repo = BlacklistRepository::new(data.db.pool());
+        let tags = repo.get_tags(&state.uuid).await?;
+        if let Some(tag) = tags.iter().find(|t| t.tag_type == state.original_type) {
+            let old_tag_type = tag.tag_type.clone();
+            let old_reason = tag.reason.clone();
+            let old_tag_id = tag.id;
+            repo.convert_tag_to_confirmed(tag.id).await?;
+            if let Some(updated_tag) = repo.get_tag_by_id(tag.id).await? {
+                let event = BlacklistEvent::TagOverwritten {
+                    uuid: state.uuid.clone(),
+                    old_tag_id,
+                    old_tag_type,
+                    old_reason,
+                    new_tag_id: updated_tag.id,
+                    overwritten_by: modal.user.id.get() as i64,
+                };
+                data.event_publisher.publish(&event).await;
+            }
+        }
+    }
+
+    let _ = modal.delete_response(&ctx.http).await;
+
     Ok(())
 }
 
@@ -508,12 +657,16 @@ pub async fn handle_remove(
     let removed_filename = state.evidence[idx].filename.clone();
     state.evidence.remove(idx);
 
+    let mut urls = gallery_url_map(&builder_msg);
+    urls.remove(&removed_filename);
+
     let components = build_evidence_message(
         &state.username,
         &state.uuid,
         &state.original_type,
         &state.evidence,
         state.review_url.as_deref(),
+        &urls,
     );
 
     let mut edit = EditMessage::new()
@@ -521,13 +674,11 @@ pub async fn handle_remove(
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(components);
 
-    let mut attachments = EditAttachments::keep_all(&builder_msg);
-    if let Some(att) = builder_msg
-        .attachments
-        .iter()
-        .find(|a| a.filename == removed_filename)
-    {
-        attachments = attachments.remove(att.id);
+    let mut attachments = EditAttachments::new();
+    for url in urls.values() {
+        if let Some(id) = attachment_id_from_cdn_url(url) {
+            attachments = attachments.keep(id);
+        }
     }
     edit = edit.attachments(attachments);
 
@@ -578,12 +729,12 @@ pub async fn archive_evidence_by_url(ctx: &Context, data: &Data, thread_url: &st
         .map(|d| d.display_name)
         .unwrap_or(&state.original_type);
 
-    let archived_message = build_archived_evidence_message(&state, reverted_display);
+    let urls = gallery_url_map(&builder_msg);
+    let archived_message = build_archived_evidence_message(&state, reverted_display, &urls);
 
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(archived_message)
-        .attachments(EditAttachments::keep_all(&builder_msg));
+        .components(archived_message);
 
     let _ = ctx
         .http
@@ -641,7 +792,8 @@ pub async fn handle_archive(
         .map(|d| d.display_name)
         .unwrap_or(&state.original_type);
 
-    let archived_message = build_archived_evidence_message(&state, reverted_display);
+    let urls = gallery_url_map(&*component.message);
+    let archived_message = build_archived_evidence_message(&state, reverted_display, &urls);
 
     component
         .create_response(
@@ -725,17 +877,6 @@ pub async fn handle_attachment_message(
         return Ok(());
     };
 
-    let messages = ctx
-        .http
-        .get_messages(channel_id.into(), None, None)
-        .await
-        .unwrap_or_default();
-
-    let prompt_msg = messages
-        .iter()
-        .find(|m| m.author.bot() && find_upload_prompt(m));
-    let prompt_msg_id = prompt_msg.map(|m| m.id);
-
     let existing_count = state.evidence.len();
 
     let mut files = Vec::new();
@@ -749,12 +890,14 @@ pub async fn handle_attachment_message(
         });
     }
 
+    let urls = gallery_url_map(&builder_msg);
     let components = build_evidence_message(
         &state.username,
         &state.uuid,
         &state.original_type,
         &state.evidence,
         state.review_url.as_deref(),
+        &urls,
     );
 
     let mut edit = EditMessage::new()
@@ -762,7 +905,12 @@ pub async fn handle_attachment_message(
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(components);
 
-    let mut attachments = EditAttachments::keep_all(&builder_msg);
+    let mut attachments = EditAttachments::new();
+    for url in urls.values() {
+        if let Some(id) = attachment_id_from_cdn_url(url) {
+            attachments = attachments.keep(id);
+        }
+    }
     for f in &files {
         attachments = attachments.add(f.clone());
     }
@@ -798,12 +946,6 @@ pub async fn handle_attachment_message(
     }
 
     let _ = message.delete(&ctx.http, None).await;
-    if let Some(prompt_id) = prompt_msg_id {
-        let _ = ctx
-            .http
-            .delete_message(channel_id.into(), prompt_id, None)
-            .await;
-    }
 
     Ok(())
 }
@@ -851,8 +993,9 @@ pub async fn create_evidence_from_review(
     }
 
     let thread_title = format!("{} | {}", username, format_uuid_dashed(uuid));
+    let no_urls = HashMap::new();
     let initial_components =
-        build_evidence_message(username, uuid, original_type, &[], review_thread_url);
+        build_evidence_message(username, uuid, original_type, &[], review_thread_url, &no_urls);
 
     let message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
@@ -874,6 +1017,7 @@ pub async fn create_evidence_from_review(
                 original_type,
                 &evidence,
                 review_thread_url,
+                &no_urls,
             ));
 
         let mut attachments = EditAttachments::new();
