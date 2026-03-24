@@ -1,3 +1,8 @@
+networks:
+  apps:
+    name: apps
+    external: true
+
 services:
   postgres:
     image: ghcr.io/hexze/coral/coral-postgres:latest
@@ -20,7 +25,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - coral-network
+      - apps
 
   redis:
     image: redis:7-alpine
@@ -32,7 +37,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - coral-network
+      - apps
 
   coral-api:
     image: ghcr.io/hexze/coral/coral-api:latest
@@ -45,14 +50,12 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-coral}
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@coral-postgres:5432/${POSTGRES_DB:-coral}
+      REDIS_URL: redis://coral-redis:6379
       HYPIXEL_API_KEYS: ${HYPIXEL_API_KEYS:?HYPIXEL_API_KEYS required}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY required}
       PORT: ${API_PORT:-8000}
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "${API_PORT:-8000}:${API_PORT:-8000}"
     healthcheck:
       test:
         [
@@ -63,8 +66,13 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.coral-api.rule=Host(`api.urchin.gg`)
+      - traefik.http.routers.coral-api.entrypoints=web
+      - traefik.http.services.coral-api.loadbalancer.server.port=8000
     networks:
-      - coral-network
+      - apps
 
   coral-bot:
     image: ghcr.io/hexze/coral/coral-bot:latest
@@ -79,8 +87,8 @@ services:
       coral-api:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-coral}
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@coral-postgres:5432/${POSTGRES_DB:-coral}
+      REDIS_URL: redis://coral-redis:6379
       DISCORD_TOKEN: ${DISCORD_TOKEN:?DISCORD_TOKEN required}
       CORAL_API_URL: http://coral-api:${API_PORT:-8000}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
@@ -91,28 +99,7 @@ services:
       MOD_CHANNEL_ID: ${MOD_CHANNEL_ID:-}
       RUST_LOG: ${RUST_LOG:-info}
     networks:
-      - coral-network
-
-  coral-verify:
-    image: ghcr.io/hexze/coral/coral-verify:latest
-    pull_policy: always
-    container_name: coral-verify
-    restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-    environment:
-      REDIS_URL: redis://redis:6379
-      VERIFY_SERVER_ADDRESS: 0.0.0.0:25565
-      RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "25565:25565"
-    networks:
-      - coral-network
+      - apps
 
 volumes:
   postgres_data:
-
-networks:
-  coral-network:
-    driver: bridge
