@@ -1,10 +1,9 @@
 use mctext::MCText;
 
-use crate::canvas::context::DrawContext;
-use crate::canvas::shape::Shape;
-use crate::canvas::text::TextRenderer;
+use crate::canvas::{context::DrawContext, shape::Shape, text::TextRenderer};
 
 use super::text_box::Align;
+
 
 pub struct Text {
     text: MCText,
@@ -14,15 +13,10 @@ pub struct Text {
     max_width: Option<u32>,
 }
 
+
 impl Text {
     pub fn new(text: MCText) -> Self {
-        Self {
-            text,
-            scale: 1.0,
-            align_x: Align::Left,
-            shadow: true,
-            max_width: None,
-        }
+        Self { text, scale: 1.0, align_x: Align::Left, shadow: true, max_width: None }
     }
 
     pub fn scale(mut self, scale: f32) -> Self {
@@ -46,15 +40,12 @@ impl Text {
     }
 }
 
+
 impl Shape for Text {
     fn measure(&self, renderer: &TextRenderer) -> (u32, u32) {
         let font_size = self.scale * 16.0;
         let (w, h) = renderer.measure(&self.text, font_size);
-        let effective_w = if let Some(max_w) = self.max_width {
-            (w as u32).min(max_w)
-        } else {
-            w.ceil() as u32
-        };
+        let effective_w = self.max_width.map(|max| (w as u32).min(max)).unwrap_or(w.ceil() as u32);
         (effective_w, h.ceil() as u32)
     }
 
@@ -68,7 +59,6 @@ impl Shape for Text {
             .filter(|&max_w| text_w > max_w as f32)
             .map(|max_w| self.scale * (max_w as f32 / text_w))
             .unwrap_or(self.scale);
-
         let effective_font_size = effective_scale * 16.0;
         let final_w = if effective_scale != self.scale {
             ctx.renderer.measure(&self.text, effective_font_size).0
@@ -79,31 +69,22 @@ impl Shape for Text {
         let text_x = match self.align_x {
             Align::Left | Align::Top | Align::Spread => ctx.x as f32,
             Align::Center => {
-                let max_w = self.max_width.unwrap_or(0);
-                ctx.x as f32 + (max_w as f32 - final_w) / 2.0
+                ctx.x as f32 + (self.max_width.unwrap_or(0) as f32 - final_w) / 2.0
             }
             Align::Right | Align::Bottom => {
-                let max_w = self.max_width.unwrap_or(0);
-                ctx.x as f32 + max_w as f32 - final_w
+                ctx.x as f32 + self.max_width.unwrap_or(0) as f32 - final_w
             }
         };
 
         ctx.renderer.draw(
-            ctx.buffer.as_mut(),
-            cw,
-            ch,
-            text_x,
-            ctx.y as f32,
-            &self.text,
-            effective_font_size,
-            self.shadow,
+            ctx.buffer.as_mut(), cw, ch, text_x, ctx.y as f32,
+            &self.text, effective_font_size, self.shadow,
         );
     }
 
-    fn size(&self) -> (u32, u32) {
-        (0, 0)
-    }
+    fn size(&self) -> (u32, u32) { (0, 0) }
 }
+
 
 pub struct TextBlock {
     lines: Vec<MCText>,
@@ -113,6 +94,7 @@ pub struct TextBlock {
     shadow: bool,
     max_width: Option<u32>,
 }
+
 
 impl TextBlock {
     pub fn new() -> Self {
@@ -157,18 +139,17 @@ impl TextBlock {
     }
 }
 
+
 impl Default for TextBlock {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
+
 
 impl Shape for TextBlock {
     fn measure(&self, renderer: &TextRenderer) -> (u32, u32) {
         let font_size = self.scale * 16.0;
         let mut max_width = 0.0f32;
         let mut total_height = 0.0f32;
-
         for (i, line) in self.lines.iter().enumerate() {
             let (w, h) = renderer.measure(line, font_size);
             max_width = max_width.max(w);
@@ -177,13 +158,7 @@ impl Shape for TextBlock {
                 total_height += self.line_spacing * self.scale;
             }
         }
-
-        let effective_w = if let Some(max_w) = self.max_width {
-            (max_width as u32).min(max_w)
-        } else {
-            max_width.ceil() as u32
-        };
-
+        let effective_w = self.max_width.map(|m| (max_width as u32).min(m)).unwrap_or(max_width.ceil() as u32);
         (effective_w, total_height.ceil() as u32)
     }
 
@@ -194,13 +169,11 @@ impl Shape for TextBlock {
 
         for line in &self.lines {
             let (text_w, text_h) = ctx.renderer.measure(line, font_size);
-
             let effective_scale = self
                 .max_width
                 .filter(|&max_w| text_w > max_w as f32)
                 .map(|max_w| self.scale * (max_w as f32 / text_w))
                 .unwrap_or(self.scale);
-
             let effective_font_size = effective_scale * 16.0;
             let (final_w, final_h) = if effective_scale != self.scale {
                 ctx.renderer.measure(line, effective_font_size)
@@ -211,31 +184,20 @@ impl Shape for TextBlock {
             let text_x = match self.align_x {
                 Align::Left | Align::Top | Align::Spread => ctx.x as f32,
                 Align::Center => {
-                    let max_w = self.max_width.unwrap_or(0);
-                    ctx.x as f32 + (max_w as f32 - final_w) / 2.0
+                    ctx.x as f32 + (self.max_width.unwrap_or(0) as f32 - final_w) / 2.0
                 }
                 Align::Right | Align::Bottom => {
-                    let max_w = self.max_width.unwrap_or(0);
-                    ctx.x as f32 + max_w as f32 - final_w
+                    ctx.x as f32 + self.max_width.unwrap_or(0) as f32 - final_w
                 }
             };
 
             ctx.renderer.draw(
-                ctx.buffer.as_mut(),
-                cw,
-                ch,
-                text_x,
-                cursor_y,
-                line,
-                effective_font_size,
-                self.shadow,
+                ctx.buffer.as_mut(), cw, ch, text_x, cursor_y,
+                line, effective_font_size, self.shadow,
             );
-
             cursor_y += final_h + (self.line_spacing * effective_scale);
         }
     }
 
-    fn size(&self) -> (u32, u32) {
-        (0, 0)
-    }
+    fn size(&self) -> (u32, u32) { (0, 0) }
 }

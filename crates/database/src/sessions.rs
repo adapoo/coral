@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 
+
 #[derive(Debug, Clone, FromRow)]
 pub struct SessionMarker {
     pub id: i64,
@@ -12,14 +13,14 @@ pub struct SessionMarker {
     pub created_at: DateTime<Utc>,
 }
 
+
 pub struct SessionRepository<'a> {
     pool: &'a PgPool,
 }
 
+
 impl<'a> SessionRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self {
-        Self { pool }
-    }
+    pub fn new(pool: &'a PgPool) -> Self { Self { pool } }
 
     pub async fn create(
         &self,
@@ -30,13 +31,11 @@ impl<'a> SessionRepository<'a> {
         pinned: bool,
     ) -> Result<SessionMarker, sqlx::Error> {
         sqlx::query_as(
-            r#"
-            INSERT INTO session_markers (uuid, discord_id, name, snapshot_timestamp, pinned)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (uuid, discord_id, name) DO UPDATE
-            SET snapshot_timestamp = $4, pinned = $5, created_at = NOW()
-            RETURNING id, uuid, discord_id, name, pinned, snapshot_timestamp, created_at
-            "#,
+            "INSERT INTO session_markers (uuid, discord_id, name, snapshot_timestamp, pinned)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (uuid, discord_id, name) DO UPDATE
+             SET snapshot_timestamp = $4, pinned = $5, created_at = NOW()
+             RETURNING id, uuid, discord_id, name, pinned, snapshot_timestamp, created_at",
         )
         .bind(uuid)
         .bind(discord_id)
@@ -47,18 +46,10 @@ impl<'a> SessionRepository<'a> {
         .await
     }
 
-    pub async fn get(
-        &self,
-        uuid: &str,
-        discord_id: i64,
-        name: &str,
-    ) -> Result<Option<SessionMarker>, sqlx::Error> {
+    pub async fn get(&self, uuid: &str, discord_id: i64, name: &str) -> Result<Option<SessionMarker>, sqlx::Error> {
         sqlx::query_as(
-            r#"
-            SELECT id, uuid, discord_id, name, pinned, snapshot_timestamp, created_at
-            FROM session_markers
-            WHERE uuid = $1 AND discord_id = $2 AND name = $3
-            "#,
+            "SELECT id, uuid, discord_id, name, pinned, snapshot_timestamp, created_at
+             FROM session_markers WHERE uuid = $1 AND discord_id = $2 AND name = $3",
         )
         .bind(uuid)
         .bind(discord_id)
@@ -67,18 +58,11 @@ impl<'a> SessionRepository<'a> {
         .await
     }
 
-    pub async fn list(
-        &self,
-        uuid: &str,
-        discord_id: i64,
-    ) -> Result<Vec<SessionMarker>, sqlx::Error> {
+    pub async fn list(&self, uuid: &str, discord_id: i64) -> Result<Vec<SessionMarker>, sqlx::Error> {
         sqlx::query_as(
-            r#"
-            SELECT id, uuid, discord_id, name, pinned, snapshot_timestamp, created_at
-            FROM session_markers
-            WHERE uuid = $1 AND discord_id = $2
-            ORDER BY created_at DESC
-            "#,
+            "SELECT id, uuid, discord_id, name, pinned, snapshot_timestamp, created_at
+             FROM session_markers WHERE uuid = $1 AND discord_id = $2
+             ORDER BY created_at DESC",
         )
         .bind(uuid)
         .bind(discord_id)
@@ -86,72 +70,35 @@ impl<'a> SessionRepository<'a> {
         .await
     }
 
-    pub async fn set_pinned(
-        &self,
-        uuid: &str,
-        discord_id: i64,
-        name: &str,
-        pinned: bool,
-    ) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query(
-            r#"
-            UPDATE session_markers
-            SET pinned = $4
-            WHERE uuid = $1 AND discord_id = $2 AND name = $3
-            "#,
-        )
-        .bind(uuid)
-        .bind(discord_id)
-        .bind(name)
-        .bind(pinned)
-        .execute(self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
+    pub async fn set_pinned(&self, uuid: &str, discord_id: i64, name: &str, pinned: bool) -> Result<bool, sqlx::Error> {
+        sqlx::query("UPDATE session_markers SET pinned = $4 WHERE uuid = $1 AND discord_id = $2 AND name = $3")
+            .bind(uuid)
+            .bind(discord_id)
+            .bind(name)
+            .bind(pinned)
+            .execute(self.pool)
+            .await
+            .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn delete(
-        &self,
-        uuid: &str,
-        discord_id: i64,
-        name: &str,
-    ) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM session_markers
-            WHERE uuid = $1 AND discord_id = $2 AND name = $3
-            "#,
-        )
-        .bind(uuid)
-        .bind(discord_id)
-        .bind(name)
-        .execute(self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
+    pub async fn delete(&self, uuid: &str, discord_id: i64, name: &str) -> Result<bool, sqlx::Error> {
+        sqlx::query("DELETE FROM session_markers WHERE uuid = $1 AND discord_id = $2 AND name = $3")
+            .bind(uuid)
+            .bind(discord_id)
+            .bind(name)
+            .execute(self.pool)
+            .await
+            .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn rename(
-        &self,
-        uuid: &str,
-        discord_id: i64,
-        old_name: &str,
-        new_name: &str,
-    ) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query(
-            r#"
-            UPDATE session_markers
-            SET name = $4
-            WHERE uuid = $1 AND discord_id = $2 AND name = $3
-            "#,
-        )
-        .bind(uuid)
-        .bind(discord_id)
-        .bind(old_name)
-        .bind(new_name)
-        .execute(self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
+    pub async fn rename(&self, uuid: &str, discord_id: i64, old_name: &str, new_name: &str) -> Result<bool, sqlx::Error> {
+        sqlx::query("UPDATE session_markers SET name = $4 WHERE uuid = $1 AND discord_id = $2 AND name = $3")
+            .bind(uuid)
+            .bind(discord_id)
+            .bind(old_name)
+            .bind(new_name)
+            .execute(self.pool)
+            .await
+            .map(|r| r.rows_affected() > 0)
     }
 }

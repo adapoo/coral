@@ -1,11 +1,14 @@
+use std::time::Duration;
+
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use std::time::Duration;
+
 
 #[derive(Clone)]
 pub struct Database {
     pool: PgPool,
 }
+
 
 impl Database {
     pub async fn connect(url: &str) -> Result<Self, sqlx::Error> {
@@ -16,7 +19,6 @@ impl Database {
             .idle_timeout(Duration::from_secs(600))
             .connect(url)
             .await?;
-
         Ok(Self { pool })
     }
 
@@ -24,7 +26,5 @@ impl Database {
         sqlx::migrate!("../../migrations").run(&self.pool).await
     }
 
-    pub fn pool(&self) -> &PgPool {
-        &self.pool
-    }
+    pub fn pool(&self) -> &PgPool { &self.pool }
 }

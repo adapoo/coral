@@ -4,18 +4,17 @@ use axum::middleware::Next;
 use axum::response::Response;
 
 use coral_redis::RateLimitResult;
-use database::{Member, MemberRepository};
+use database::{AccessRank, Member, MemberRepository};
 
 use crate::state::AppState;
 
-const ACCESS_LEVEL_MODERATOR: i16 = 3;
-const ACCESS_LEVEL_ADMIN: i16 = 4;
 
 #[derive(Clone)]
 pub struct AuthenticatedMember(pub Member);
 
 #[derive(Clone)]
 pub struct InternalAuth;
+
 
 pub async fn require_internal_or_admin(
     State(state): State<AppState>,
@@ -30,14 +29,13 @@ pub async fn require_internal_or_admin(
     }
 
     let member = authenticate_member(&state, &api_key).await?;
-
-    if member.access_level < ACCESS_LEVEL_ADMIN {
+    if AccessRank::from_level(member.access_level) < AccessRank::Admin {
         return Err(StatusCode::FORBIDDEN);
     }
-
     request.extensions_mut().insert(AuthenticatedMember(member));
     Ok(next.run(request).await)
 }
+
 
 pub async fn require_moderator(
     State(state): State<AppState>,
@@ -46,14 +44,13 @@ pub async fn require_moderator(
 ) -> Result<Response, StatusCode> {
     let api_key = extract_api_key(&request).ok_or(StatusCode::UNAUTHORIZED)?;
     let member = authenticate_member(&state, &api_key).await?;
-
-    if member.access_level < ACCESS_LEVEL_MODERATOR {
+    if AccessRank::from_level(member.access_level) < AccessRank::Moderator {
         return Err(StatusCode::FORBIDDEN);
     }
-
     request.extensions_mut().insert(AuthenticatedMember(member));
     Ok(next.run(request).await)
 }
+
 
 pub async fn allow_internal_or_auth(
     State(state): State<AppState>,
@@ -72,6 +69,7 @@ pub async fn allow_internal_or_auth(
     Ok(next.run(request).await)
 }
 
+
 async fn authenticate_member(state: &AppState, api_key: &str) -> Result<Member, StatusCode> {
     let member = MemberRepository::new(state.db.pool())
         .get_by_api_key(api_key)
@@ -83,17 +81,16 @@ async fn authenticate_member(state: &AppState, api_key: &str) -> Result<Member, 
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let limit = rate_limit_for_access(member.access_level);
-    match state.rate_limiter.check_and_record(api_key, limit).await {
+    match state.rate_limiter.check_and_record(api_key, rate_limit_for_access(member.access_level)).await {
         Ok(RateLimitResult::Allowed { .. }) => {}
         Ok(RateLimitResult::Exceeded) => return Err(StatusCode::TOO_MANY_REQUESTS),
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
-
     Ok(member)
 }
 
-fn rate_limit_for_access(access_level: i16) -> i64 {
+
+pub fn rate_limit_for_access(access_level: i16) -> i64 {
     match access_level {
         4.. => 3000,
         2..=3 => 1200,
@@ -101,23 +98,19 @@ fn rate_limit_for_access(access_level: i16) -> i64 {
     }
 }
 
+
 fn is_internal_key(state: &AppState, api_key: &str) -> bool {
-    state
-        .internal_api_key
-        .as_ref()
-        .map(|k| k == api_key)
-        .unwrap_or(false)
+    state.internal_api_key.as_ref().is_some_and(|k| k == api_key)
 }
+
 
 fn extract_api_key(request: &Request) -> Option<String> {
     if let Some(header) = request.headers().get("X-API-Key") {
         return header.to_str().ok().map(String::from);
     }
-
-    request.uri().query().and_then(|query| {
-        query
-            .split('&')
-            .find_map(|pair| pair.strip_prefix("key="))
-            .map(String::from)
+    request.uri().query().and_then(|q| {
+        form_urlencoded::parse(q.as_bytes())
+            .find(|(k, _)| k == "key")
+            .map(|(_, v)| v.into_owned())
     })
 }

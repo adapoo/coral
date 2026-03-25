@@ -3,7 +3,7 @@ use std::env;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use serenity::all::{ChannelId, Client, GatewayIntents, Token};
+use serenity::all::*;
 use tracing_subscriber::EnvFilter;
 
 use clients::{LocalSkinProvider, SkinProvider};
@@ -24,18 +24,17 @@ mod utils;
 use api::CoralApiClient;
 use framework::{Data, Handler};
 
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_logging();
-
     let data = init_data().await?;
     let mut client = build_client(data).await?;
-
     tracing::info!("Starting Coral Bot");
     client.start().await?;
-
     Ok(())
 }
+
 
 fn init_logging() {
     dotenvy::dotenv().ok();
@@ -45,6 +44,7 @@ fn init_logging() {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
+
 async fn init_data() -> Result<Data> {
     render::init_canvas();
 
@@ -52,9 +52,6 @@ async fn init_data() -> Result<Data> {
     let redis_url = env::var("REDIS_URL").expect("REDIS_URL required");
     let api_url = env::var("CORAL_API_URL").expect("CORAL_API_URL required");
     let api_key = env::var("INTERNAL_API_KEY").expect("INTERNAL_API_KEY required");
-    let owner_ids = parse_owner_ids();
-    let blacklist_channel_id = parse_channel_id("BLACKLIST_CHANNEL_ID");
-    let mod_channel_id = parse_channel_id("MOD_CHANNEL_ID");
 
     let db = Database::connect(&database_url).await?;
     let redis = RedisPool::connect(&redis_url).await?;
@@ -67,9 +64,9 @@ async fn init_data() -> Result<Data> {
         db: Arc::new(db),
         api: Arc::new(api),
         skin_provider,
-        owner_ids,
-        blacklist_channel_id,
-        mod_channel_id,
+        owner_ids: parse_owner_ids(),
+        blacklist_channel_id: parse_channel_id("BLACKLIST_CHANNEL_ID"),
+        mod_channel_id: parse_channel_id("MOD_CHANNEL_ID"),
         review_forum_id: parse_channel_id("REVIEW_FORUM_ID"),
         evidence_forum_id: parse_channel_id("EVIDENCE_FORUM_ID"),
         redis,
@@ -84,20 +81,20 @@ async fn init_data() -> Result<Data> {
     })
 }
 
+
 fn parse_owner_ids() -> Vec<u64> {
     env::var("OWNER_IDS")
         .unwrap_or_default()
         .split(',')
-        .filter_map(|s| s.trim().parse::<u64>().ok())
+        .filter_map(|s| s.trim().parse().ok())
         .collect()
 }
 
+
 fn parse_channel_id(name: &str) -> Option<ChannelId> {
-    env::var(name)
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(ChannelId::new)
+    env::var(name).ok().and_then(|s| s.parse::<u64>().ok()).map(ChannelId::new)
 }
+
 
 async fn build_client(data: Data) -> Result<Client> {
     let token = Token::from_env("DISCORD_TOKEN").expect("Invalid DISCORD_TOKEN");
@@ -106,9 +103,7 @@ async fn build_client(data: Data) -> Result<Client> {
         | GatewayIntents::GUILD_MEMBERS
         | GatewayIntents::MESSAGE_CONTENT;
 
-    let client = Client::builder(token, intents)
+    Ok(Client::builder(token, intents)
         .event_handler(Arc::new(Handler::new(data)))
-        .await?;
-
-    Ok(client)
+        .await?)
 }

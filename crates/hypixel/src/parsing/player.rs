@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+
 pub fn color_code(color: &str) -> &'static str {
     match color.to_uppercase().as_str() {
         "BLACK" => "§0",
@@ -22,9 +23,11 @@ pub fn color_code(color: &str) -> &'static str {
     }
 }
 
+
 pub fn calculate_network_level(exp: f64) -> f64 {
     ((2.0 * exp + 30625.0).sqrt() / 50.0) - 2.5
 }
+
 
 pub fn extract_rank_prefix(player: &Value) -> Option<String> {
     if let Some(prefix) = player.get("prefix").and_then(|v| v.as_str()) {
@@ -32,19 +35,11 @@ pub fn extract_rank_prefix(player: &Value) -> Option<String> {
     }
 
     let rank = player.get("rank").and_then(|v| v.as_str());
-    let monthly_package_rank = player.get("monthlyPackageRank").and_then(|v| v.as_str());
-    let new_package_rank = player.get("newPackageRank").and_then(|v| v.as_str());
-    let package_rank = player.get("packageRank").and_then(|v| v.as_str());
-
-    let rank_color = player
-        .get("rankPlusColor")
-        .and_then(|v| v.as_str())
-        .unwrap_or("RED");
-
-    let monthly_color = player
-        .get("monthlyRankColor")
-        .and_then(|v| v.as_str())
-        .unwrap_or("GOLD");
+    let monthly = player.get("monthlyPackageRank").and_then(|v| v.as_str());
+    let new_pkg = player.get("newPackageRank").and_then(|v| v.as_str());
+    let pkg = player.get("packageRank").and_then(|v| v.as_str());
+    let plus_color = color_code(player.get("rankPlusColor").and_then(|v| v.as_str()).unwrap_or("RED"));
+    let monthly_color = color_code(player.get("monthlyRankColor").and_then(|v| v.as_str()).unwrap_or("GOLD"));
 
     if let Some(r) = rank {
         match r {
@@ -55,17 +50,12 @@ pub fn extract_rank_prefix(player: &Value) -> Option<String> {
         }
     }
 
-    if monthly_package_rank == Some("SUPERSTAR") {
-        let color = color_code(monthly_color);
-        let plus_color = color_code(rank_color);
-        return Some(format!("{}[MVP{}++§r{}] ", color, plus_color, color));
+    if monthly == Some("SUPERSTAR") {
+        return Some(format!("{monthly_color}[MVP{plus_color}++§r{monthly_color}] "));
     }
 
-    match new_package_rank.or(package_rank) {
-        Some("MVP_PLUS") => {
-            let plus_color = color_code(rank_color);
-            Some(format!("§b[MVP{}+§b] ", plus_color))
-        }
+    match new_pkg.or(pkg) {
+        Some("MVP_PLUS") => Some(format!("§b[MVP{plus_color}+§b] ")),
         Some("MVP") => Some("§b[MVP] ".to_string()),
         Some("VIP_PLUS") => Some("§a[VIP§6+§a] ".to_string()),
         Some("VIP") => Some("§a[VIP] ".to_string()),

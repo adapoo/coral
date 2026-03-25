@@ -2,13 +2,16 @@ use chrono::{DateTime, Utc};
 
 use super::bedwars::{Mode, WinstreakSnapshot};
 
+
 const MIN_STREAK_THRESHOLD: u64 = 15;
+
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StreakSource {
     Urchin,
     Antisniper,
 }
+
 
 pub struct Streak {
     pub value: u64,
@@ -17,22 +20,22 @@ pub struct Streak {
     pub source: StreakSource,
 }
 
+
 pub struct WinstreakHistory {
     pub streaks: Vec<Streak>,
 }
 
+
 pub fn calculate(snapshots: &[(DateTime<Utc>, WinstreakSnapshot)], mode: Mode) -> WinstreakHistory {
     if snapshots.is_empty() {
-        return WinstreakHistory {
-            streaks: Vec::new(),
-        };
+        return WinstreakHistory { streaks: Vec::new() };
     }
 
     let mut streaks = Vec::new();
     let mut streak_start: Option<usize> = None;
-    let mut peak_api_winstreak: Option<u64> = None;
+    let mut peak_api_ws: Option<u64> = None;
 
-    for (i, (_timestamp, stats)) in snapshots.iter().enumerate() {
+    for (i, (_ts, stats)) in snapshots.iter().enumerate() {
         let (wins, losses) = mode_wins_losses(stats, mode);
         let api_ws = api_winstreak(stats, mode);
 
@@ -44,56 +47,46 @@ pub fn calculate(snapshots: &[(DateTime<Utc>, WinstreakSnapshot)], mode: Mode) -
         };
 
         if let Some(ws) = api_ws {
-            peak_api_winstreak = Some(peak_api_winstreak.map_or(ws, |peak| peak.max(ws)));
+            peak_api_ws = Some(peak_api_ws.map_or(ws, |peak| peak.max(ws)));
         }
 
         if let (Some(start_idx), true) = (streak_start, delta_losses > 0) {
             let prev_idx = i - 1;
-            let prev_timestamp = snapshots[prev_idx].0;
+            let prev_ts = snapshots[prev_idx].0;
             let (start_wins, _) = mode_wins_losses(&snapshots[start_idx].1, mode);
-
             let (prev_wins, _) = mode_wins_losses(&snapshots[prev_idx].1, mode);
 
-            let (value, approximate) = if let Some(peak) = peak_api_winstreak {
-                let delta_wins = wins.saturating_sub(prev_wins);
-
-                let mut best = peak;
-                if delta_losses == 1 {
-                    let wins_after_loss = api_ws.unwrap_or(0);
-                    let total_streak_wins = wins
-                        .saturating_sub(start_wins)
-                        .saturating_sub(wins_after_loss);
-                    best = best.max(total_streak_wins);
-                } else {
-                    let observed_streak_wins = prev_wins.saturating_sub(start_wins);
-                    best = best.max(observed_streak_wins);
+            let (value, approximate) = match peak_api_ws {
+                Some(peak) => {
+                    let delta_wins = wins.saturating_sub(prev_wins);
+                    let mut best = peak;
+                    if delta_losses == 1 {
+                        let after_loss = api_ws.unwrap_or(0);
+                        best = best.max(wins.saturating_sub(start_wins).saturating_sub(after_loss));
+                    } else {
+                        best = best.max(prev_wins.saturating_sub(start_wins));
+                    }
+                    (best, delta_wins >= 2 || best > peak)
                 }
-
-                (best, delta_wins >= 2 || best > peak)
-            } else {
-                (prev_wins.saturating_sub(start_wins), true)
+                None => (prev_wins.saturating_sub(start_wins), true),
             };
 
             if value >= MIN_STREAK_THRESHOLD {
                 streaks.push(Streak {
                     value,
                     approximate,
-                    timestamp: prev_timestamp,
+                    timestamp: prev_ts,
                     source: StreakSource::Urchin,
                 });
             }
 
             streak_start = None;
-            peak_api_winstreak = None;
+            peak_api_ws = None;
         }
 
         if streak_start.is_none() && (delta_losses > 0 || i == 0) {
             streak_start = Some(i);
-            peak_api_winstreak = None;
-
-            if let Some(ws) = api_ws {
-                peak_api_winstreak = Some(ws);
-            }
+            peak_api_ws = api_ws;
         }
     }
 
@@ -101,27 +94,23 @@ pub fn calculate(snapshots: &[(DateTime<Utc>, WinstreakSnapshot)], mode: Mode) -
     WinstreakHistory { streaks }
 }
 
+
 fn mode_wins_losses(stats: &WinstreakSnapshot, mode: Mode) -> (u64, u64) {
     match mode {
         Mode::Overall | Mode::Core => {
-            let wins = stats.solos.wins + stats.doubles.wins + stats.threes.wins + stats.fours.wins;
-            let losses = stats.solos.losses
-                + stats.doubles.losses
-                + stats.threes.losses
-                + stats.fours.losses;
-            (wins, losses)
+            let w = stats.solos.wins + stats.doubles.wins + stats.threes.wins + stats.fours.wins;
+            let l = stats.solos.losses + stats.doubles.losses + stats.threes.losses + stats.fours.losses;
+            (w, l)
         }
         Mode::Solos => (stats.solos.wins, stats.solos.losses),
         Mode::Doubles => (stats.doubles.wins, stats.doubles.losses),
         Mode::Threes => (stats.threes.wins, stats.threes.losses),
         Mode::Fours => (stats.fours.wins, stats.fours.losses),
-        Mode::FourTeamModes => (
-            stats.threes.wins + stats.fours.wins,
-            stats.threes.losses + stats.fours.losses,
-        ),
+        Mode::FourTeamModes => (stats.threes.wins + stats.fours.wins, stats.threes.losses + stats.fours.losses),
         Mode::FourVFour => (stats.four_v_four.wins, stats.four_v_four.losses),
     }
 }
+
 
 fn api_winstreak(stats: &WinstreakSnapshot, mode: Mode) -> Option<u64> {
     match mode {
@@ -135,38 +124,31 @@ fn api_winstreak(stats: &WinstreakSnapshot, mode: Mode) -> Option<u64> {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::super::bedwars::WinstreakModeData;
     use super::*;
     use chrono::TimeZone;
 
-    fn ts(secs: i64) -> DateTime<Utc> {
-        Utc.timestamp_opt(secs, 0).unwrap()
-    }
+    fn ts(secs: i64) -> DateTime<Utc> { Utc.timestamp_opt(secs, 0).unwrap() }
 
     fn snapshot(solos_wins: u64, solos_losses: u64, ws: Option<u64>) -> WinstreakSnapshot {
         WinstreakSnapshot {
-            solos: WinstreakModeData {
-                wins: solos_wins,
-                losses: solos_losses,
-                winstreak: ws,
-            },
+            solos: WinstreakModeData { wins: solos_wins, losses: solos_losses, winstreak: ws },
             ..Default::default()
         }
     }
 
     #[test]
     fn empty_snapshots_returns_empty() {
-        let history = calculate(&[], Mode::Solos);
-        assert!(history.streaks.is_empty());
+        assert!(calculate(&[], Mode::Solos).streaks.is_empty());
     }
 
     #[test]
     fn single_snapshot_no_streaks() {
         let snaps = vec![(ts(1000), snapshot(100, 50, Some(5)))];
-        let history = calculate(&snaps, Mode::Solos);
-        assert!(history.streaks.is_empty());
+        assert!(calculate(&snaps, Mode::Solos).streaks.is_empty());
     }
 
     #[test]
@@ -176,8 +158,7 @@ mod tests {
             (ts(2000), snapshot(110, 50, Some(10))),
             (ts(3000), snapshot(112, 51, Some(2))),
         ];
-        let history = calculate(&snaps, Mode::Solos);
-        assert!(history.streaks.is_empty());
+        assert!(calculate(&snaps, Mode::Solos).streaks.is_empty());
     }
 
     #[test]
@@ -195,39 +176,18 @@ mod tests {
     #[test]
     fn no_api_winstreak_uses_delta_wins() {
         let snaps = vec![
-            (
-                ts(1000),
-                WinstreakSnapshot {
-                    solos: WinstreakModeData {
-                        wins: 100,
-                        losses: 50,
-                        winstreak: None,
-                    },
-                    ..Default::default()
-                },
-            ),
-            (
-                ts(2000),
-                WinstreakSnapshot {
-                    solos: WinstreakModeData {
-                        wins: 120,
-                        losses: 50,
-                        winstreak: None,
-                    },
-                    ..Default::default()
-                },
-            ),
-            (
-                ts(3000),
-                WinstreakSnapshot {
-                    solos: WinstreakModeData {
-                        wins: 121,
-                        losses: 51,
-                        winstreak: None,
-                    },
-                    ..Default::default()
-                },
-            ),
+            (ts(1000), WinstreakSnapshot {
+                solos: WinstreakModeData { wins: 100, losses: 50, winstreak: None },
+                ..Default::default()
+            }),
+            (ts(2000), WinstreakSnapshot {
+                solos: WinstreakModeData { wins: 120, losses: 50, winstreak: None },
+                ..Default::default()
+            }),
+            (ts(3000), WinstreakSnapshot {
+                solos: WinstreakModeData { wins: 121, losses: 51, winstreak: None },
+                ..Default::default()
+            }),
         ];
         let history = calculate(&snaps, Mode::Solos);
         assert_eq!(history.streaks.len(), 1);

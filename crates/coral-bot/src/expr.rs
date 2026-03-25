@@ -4,6 +4,7 @@ use serde_json::Value;
 const MAX_DEPTH: usize = 16;
 const MAX_OUTPUT_LEN: usize = 256;
 
+
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Number(f64),
@@ -32,6 +33,7 @@ enum Token {
     Colon,
 }
 
+
 fn tokenize(input: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = input.chars().collect();
@@ -40,104 +42,47 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
     while i < chars.len() {
         match chars[i] {
             c if c.is_whitespace() => i += 1,
-            '.' => {
-                tokens.push(Token::Dot);
-                i += 1;
-            }
-            '+' => {
-                tokens.push(Token::Plus);
-                i += 1;
-            }
-            '-' => {
-                tokens.push(Token::Minus);
-                i += 1;
-            }
-            '*' => {
-                tokens.push(Token::Star);
-                i += 1;
-            }
-            '/' => {
-                tokens.push(Token::Slash);
-                i += 1;
-            }
-            '%' => {
-                tokens.push(Token::Percent);
-                i += 1;
-            }
-            '(' => {
-                tokens.push(Token::LParen);
-                i += 1;
-            }
-            ')' => {
-                tokens.push(Token::RParen);
-                i += 1;
-            }
-            '>' if i + 1 < chars.len() && chars[i + 1] == '=' => {
-                tokens.push(Token::Ge);
-                i += 2;
-            }
-            '<' if i + 1 < chars.len() && chars[i + 1] == '=' => {
-                tokens.push(Token::Le);
-                i += 2;
-            }
-            '=' if i + 1 < chars.len() && chars[i + 1] == '=' => {
-                tokens.push(Token::Eq);
-                i += 2;
-            }
-            '!' if i + 1 < chars.len() && chars[i + 1] == '=' => {
-                tokens.push(Token::Ne);
-                i += 2;
-            }
-            '>' => {
-                tokens.push(Token::Gt);
-                i += 1;
-            }
-            '<' => {
-                tokens.push(Token::Lt);
-                i += 1;
-            }
+            '.' => { tokens.push(Token::Dot); i += 1 }
+            '+' => { tokens.push(Token::Plus); i += 1 }
+            '-' => { tokens.push(Token::Minus); i += 1 }
+            '*' => { tokens.push(Token::Star); i += 1 }
+            '/' => { tokens.push(Token::Slash); i += 1 }
+            '%' => { tokens.push(Token::Percent); i += 1 }
+            '(' => { tokens.push(Token::LParen); i += 1 }
+            ')' => { tokens.push(Token::RParen); i += 1 }
+            ',' => { tokens.push(Token::Comma); i += 1 }
+            ':' => { tokens.push(Token::Colon); i += 1 }
+            '>' if i + 1 < chars.len() && chars[i + 1] == '=' => { tokens.push(Token::Ge); i += 2 }
+            '<' if i + 1 < chars.len() && chars[i + 1] == '=' => { tokens.push(Token::Le); i += 2 }
+            '=' if i + 1 < chars.len() && chars[i + 1] == '=' => { tokens.push(Token::Eq); i += 2 }
+            '!' if i + 1 < chars.len() && chars[i + 1] == '=' => { tokens.push(Token::Ne); i += 2 }
+            '>' => { tokens.push(Token::Gt); i += 1 }
+            '<' => { tokens.push(Token::Lt); i += 1 }
             '"' => {
                 i += 1;
                 let start = i;
-                while i < chars.len() && chars[i] != '"' {
-                    i += 1;
-                }
-                let s: String = chars[start..i].iter().collect();
-                tokens.push(Token::String(s));
-                if i < chars.len() {
-                    i += 1;
-                }
+                while i < chars.len() && chars[i] != '"' { i += 1 }
+                tokens.push(Token::String(chars[start..i].iter().collect()));
+                if i < chars.len() { i += 1 }
             }
             c if c.is_ascii_digit() => {
                 let start = i;
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
-                    i += 1;
-                }
+                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') { i += 1 }
                 let s: String = chars[start..i].iter().collect();
                 tokens.push(Token::Number(s.parse::<f64>()?));
             }
-            ',' => {
-                tokens.push(Token::Comma);
-                i += 1;
-            }
-            ':' => {
-                tokens.push(Token::Colon);
-                i += 1;
-            }
             c if c.is_ascii_alphanumeric() || c == '_' => {
                 let start = i;
-                while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
-                    i += 1;
-                }
+                while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') { i += 1 }
                 let word: String = chars[start..i].iter().collect();
-                match word.as_str() {
-                    "and" => tokens.push(Token::And),
-                    "or" => tokens.push(Token::Or),
-                    "not" => tokens.push(Token::Not),
-                    "if" => tokens.push(Token::If),
-                    "else" => tokens.push(Token::Else),
-                    _ => tokens.push(Token::Ident(word)),
-                }
+                tokens.push(match word.as_str() {
+                    "and" => Token::And,
+                    "or" => Token::Or,
+                    "not" => Token::Not,
+                    "if" => Token::If,
+                    "else" => Token::Else,
+                    _ => Token::Ident(word),
+                });
             }
             c => bail!("unexpected character: '{c}'"),
         }
@@ -145,6 +90,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
 
     Ok(tokens)
 }
+
 
 #[derive(Debug, Clone)]
 enum Expr {
@@ -159,22 +105,14 @@ enum Expr {
     },
 }
 
+
 #[derive(Debug, Clone)]
 enum BinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Gt,
-    Lt,
-    Ge,
-    Le,
-    Eq,
-    Ne,
-    And,
-    Or,
+    Add, Sub, Mul, Div, Mod,
+    Gt, Lt, Ge, Le, Eq, Ne,
+    And, Or,
 }
+
 
 struct Parser {
     tokens: Vec<Token>,
@@ -182,18 +120,13 @@ struct Parser {
     depth: usize,
 }
 
+
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Self {
-            tokens,
-            pos: 0,
-            depth: 0,
-        }
+        Self { tokens, pos: 0, depth: 0 }
     }
 
-    fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.pos)
-    }
+    fn peek(&self) -> Option<&Token> { self.tokens.get(self.pos) }
 
     fn advance(&mut self) -> Option<Token> {
         let tok = self.tokens.get(self.pos)?.clone();
@@ -210,15 +143,11 @@ impl Parser {
 
     fn enter(&mut self) -> Result<()> {
         self.depth += 1;
-        if self.depth > MAX_DEPTH {
-            bail!("expression too deeply nested");
-        }
+        if self.depth > MAX_DEPTH { bail!("expression too deeply nested") }
         Ok(())
     }
 
-    fn leave(&mut self) {
-        self.depth -= 1;
-    }
+    fn leave(&mut self) { self.depth -= 1 }
 
     fn parse(mut self) -> Result<Expr> {
         let expr = self.parse_or()?;
@@ -233,8 +162,7 @@ impl Parser {
         let mut left = self.parse_and()?;
         while matches!(self.peek(), Some(Token::Or)) {
             self.advance();
-            let right = self.parse_and()?;
-            left = Expr::BinOp(Box::new(left), BinOp::Or, Box::new(right));
+            left = Expr::BinOp(Box::new(left), BinOp::Or, Box::new(self.parse_and()?));
         }
         self.leave();
         Ok(left)
@@ -245,8 +173,7 @@ impl Parser {
         let mut left = self.parse_comparison()?;
         while matches!(self.peek(), Some(Token::And)) {
             self.advance();
-            let right = self.parse_comparison()?;
-            left = Expr::BinOp(Box::new(left), BinOp::And, Box::new(right));
+            left = Expr::BinOp(Box::new(left), BinOp::And, Box::new(self.parse_comparison()?));
         }
         self.leave();
         Ok(left)
@@ -262,10 +189,7 @@ impl Parser {
             Some(Token::Le) => BinOp::Le,
             Some(Token::Eq) => BinOp::Eq,
             Some(Token::Ne) => BinOp::Ne,
-            _ => {
-                self.leave();
-                return Ok(left);
-            }
+            _ => { self.leave(); return Ok(left) }
         };
         self.advance();
         let right = self.parse_additive()?;
@@ -283,8 +207,7 @@ impl Parser {
                 _ => break,
             };
             self.advance();
-            let right = self.parse_multiplicative()?;
-            left = Expr::BinOp(Box::new(left), op, Box::new(right));
+            left = Expr::BinOp(Box::new(left), op, Box::new(self.parse_multiplicative()?));
         }
         self.leave();
         Ok(left)
@@ -301,8 +224,7 @@ impl Parser {
                 _ => break,
             };
             self.advance();
-            let right = self.parse_unary()?;
-            left = Expr::BinOp(Box::new(left), op, Box::new(right));
+            left = Expr::BinOp(Box::new(left), op, Box::new(self.parse_unary()?));
         }
         self.leave();
         Ok(left)
@@ -367,8 +289,7 @@ impl Parser {
             };
 
             self.expect(&Token::Colon)?;
-            let value = self.parse_or()?;
-            branches.push((Box::new(condition), Box::new(value)));
+            branches.push((Box::new(condition), Box::new(self.parse_or()?)));
 
             if !matches!(self.peek(), Some(Token::Comma)) {
                 bail!("expected ',' or 'else' in conditional");
@@ -380,19 +301,13 @@ impl Parser {
                 self.expect(&Token::Colon)?;
                 let fallback = self.parse_or()?;
                 self.leave();
-                return Ok(Expr::Cond {
-                    branches,
-                    fallback: Box::new(fallback),
-                });
+                return Ok(Expr::Cond { branches, fallback: Box::new(fallback) });
             }
         }
     }
 
     fn peek_is_comparison_op(&self) -> bool {
-        matches!(
-            self.peek(),
-            Some(Token::Lt | Token::Gt | Token::Le | Token::Ge | Token::Eq | Token::Ne)
-        )
+        matches!(self.peek(), Some(Token::Lt | Token::Gt | Token::Le | Token::Ge | Token::Eq | Token::Ne))
     }
 
     fn parse_comparison_op(&mut self) -> Result<BinOp> {
@@ -408,6 +323,7 @@ impl Parser {
     }
 }
 
+
 #[derive(Debug, Clone)]
 pub enum EvalResult {
     Number(f64),
@@ -416,17 +332,12 @@ pub enum EvalResult {
     Null,
 }
 
+
 impl EvalResult {
     fn as_number(&self) -> f64 {
         match self {
             EvalResult::Number(n) => *n,
-            EvalResult::Bool(b) => {
-                if *b {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
+            EvalResult::Bool(true) => 1.0,
             _ => 0.0,
         }
     }
@@ -442,13 +353,10 @@ impl EvalResult {
 
     fn format(&self, fmt: &str) -> String {
         match self {
-            EvalResult::Number(n) => {
-                if let Some(precision) = parse_format_spec(fmt) {
-                    format!("{n:.precision$}")
-                } else {
-                    format!("{n}")
-                }
-            }
+            EvalResult::Number(n) => match parse_format_spec(fmt) {
+                Some(precision) => format!("{n:.precision$}"),
+                None => format!("{n}"),
+            },
             EvalResult::Text(s) => s.clone(),
             EvalResult::Bool(b) => b.to_string(),
             EvalResult::Null => String::new(),
@@ -456,22 +364,19 @@ impl EvalResult {
     }
 }
 
+
 impl std::fmt::Display for EvalResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EvalResult::Number(n) => {
-                if *n == (*n as i64) as f64 {
-                    write!(f, "{}", *n as i64)
-                } else {
-                    write!(f, "{n}")
-                }
-            }
+            EvalResult::Number(n) if *n == (*n as i64) as f64 => write!(f, "{}", *n as i64),
+            EvalResult::Number(n) => write!(f, "{n}"),
             EvalResult::Text(s) => write!(f, "{s}"),
             EvalResult::Bool(b) => write!(f, "{b}"),
             EvalResult::Null => Ok(()),
         }
     }
 }
+
 
 fn parse_format_spec(fmt: &str) -> Option<usize> {
     let fmt = fmt.trim();
@@ -481,6 +386,7 @@ fn parse_format_spec(fmt: &str) -> Option<usize> {
         None
     }
 }
+
 
 fn resolve_field(ctx: &Value, path: &[String]) -> EvalResult {
     let mut current = ctx;
@@ -493,6 +399,7 @@ fn resolve_field(ctx: &Value, path: &[String]) -> EvalResult {
     value_to_result(current)
 }
 
+
 fn value_to_result(v: &Value) -> EvalResult {
     match v {
         Value::Number(n) => EvalResult::Number(n.as_f64().unwrap_or(0.0)),
@@ -502,6 +409,7 @@ fn value_to_result(v: &Value) -> EvalResult {
         _ => EvalResult::Text(v.to_string()),
     }
 }
+
 
 fn eval(expr: &Expr, ctx: &Value) -> EvalResult {
     match expr {
@@ -525,20 +433,12 @@ fn eval(expr: &Expr, ctx: &Value) -> EvalResult {
                 BinOp::Sub => EvalResult::Number(l.as_number() - r.as_number()),
                 BinOp::Mul => EvalResult::Number(l.as_number() * r.as_number()),
                 BinOp::Div => {
-                    let denom = r.as_number();
-                    if denom == 0.0 {
-                        EvalResult::Number(0.0)
-                    } else {
-                        EvalResult::Number(l.as_number() / denom)
-                    }
+                    let d = r.as_number();
+                    EvalResult::Number(if d == 0.0 { 0.0 } else { l.as_number() / d })
                 }
                 BinOp::Mod => {
-                    let denom = r.as_number();
-                    if denom == 0.0 {
-                        EvalResult::Number(0.0)
-                    } else {
-                        EvalResult::Number(l.as_number() % denom)
-                    }
+                    let d = r.as_number();
+                    EvalResult::Number(if d == 0.0 { 0.0 } else { l.as_number() % d })
                 }
                 BinOp::Gt => EvalResult::Bool(l.as_number() > r.as_number()),
                 BinOp::Lt => EvalResult::Bool(l.as_number() < r.as_number()),
@@ -563,17 +463,18 @@ fn eval(expr: &Expr, ctx: &Value) -> EvalResult {
     }
 }
 
+
 pub struct RenderedNickname {
     pub before: String,
     pub truncatable: Option<String>,
     pub after: String,
 }
 
+
 impl RenderedNickname {
     pub fn to_truncated(&self, max_len: usize) -> String {
         let Some(truncatable) = &self.truncatable else {
-            let full = format!("{}{}", self.before, self.after);
-            return truncate_str(&full, max_len);
+            return truncate_str(&format!("{}{}", self.before, self.after), max_len);
         };
 
         let full = format!("{}{}{}", self.before, truncatable, self.after);
@@ -581,33 +482,23 @@ impl RenderedNickname {
             return full;
         }
 
-        let fixed_len = self.before.len() + self.after.len();
-        let budget = max_len.saturating_sub(fixed_len);
-
+        let budget = max_len.saturating_sub(self.before.len() + self.after.len());
         if budget == 0 {
-            let fixed = format!("{}{}", self.before, self.after);
-            return truncate_str(&fixed, max_len);
+            return truncate_str(&format!("{}{}", self.before, self.after), max_len);
         }
 
-        format!(
-            "{}{}{}",
-            self.before,
-            truncate_str(truncatable, budget),
-            self.after
-        )
+        format!("{}{}{}", self.before, truncate_str(truncatable, budget), self.after)
     }
 }
 
+
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        return s.to_string();
-    }
+    if s.len() <= max_len { return s.to_string() }
     let mut end = max_len;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
+    while !s.is_char_boundary(end) { end -= 1 }
     s[..end].trim_end().to_string()
 }
+
 
 pub fn render_template(template: &str, ctx: &Value) -> RenderedNickname {
     let mut output = String::new();
@@ -633,15 +524,13 @@ pub fn render_template(template: &str, ctx: &Value) -> RenderedNickname {
             }
 
             let (expr_str, format_spec) = split_format_spec(&inner);
-
             match tokenize(expr_str).and_then(|t| Parser::new(t).parse()) {
                 Ok(expr) => {
                     let result = eval(&expr, ctx);
-                    let formatted = match &format_spec {
+                    output.push_str(&match &format_spec {
                         Some(spec) => result.format(spec),
                         None => result.to_string(),
-                    };
-                    output.push_str(&formatted);
+                    });
                 }
                 Err(_) => {
                     output.push('{');
@@ -674,17 +563,18 @@ pub fn render_template(template: &str, ctx: &Value) -> RenderedNickname {
     }
 }
 
+
 pub fn eval_condition(condition: &str, ctx: &Value) -> Result<bool> {
     let tokens = tokenize(condition)?;
-    let expr = Parser::new(tokens).parse()?;
-    Ok(eval(&expr, ctx).as_bool())
+    Ok(eval(&Parser::new(tokens).parse()?, ctx).as_bool())
 }
 
+
 pub fn validate_condition(condition: &str) -> Result<()> {
-    let tokens = tokenize(condition)?;
-    Parser::new(tokens).parse()?;
+    Parser::new(tokenize(condition)?).parse()?;
     Ok(())
 }
+
 
 pub fn validate_template(template: &str) -> Result<()> {
     let chars: Vec<char> = template.chars().collect();
@@ -694,17 +584,10 @@ pub fn validate_template(template: &str) -> Result<()> {
         if chars[i] == '{' {
             let (inner, end) = extract_brace_content(&chars, i + 1);
             i = end;
-
             let trimmed = inner.trim();
-            let expr_input = if let Some(rest) = trimmed.strip_prefix("..") {
-                rest.trim()
-            } else {
-                trimmed
-            };
-
+            let expr_input = trimmed.strip_prefix("..").map(|r| r.trim()).unwrap_or(trimmed);
             let (expr_str, _) = split_format_spec(expr_input);
-            let tokens = tokenize(expr_str)?;
-            Parser::new(tokens).parse()?;
+            Parser::new(tokenize(expr_str)?).parse()?;
         } else {
             i += 1;
         }
@@ -712,6 +595,7 @@ pub fn validate_template(template: &str) -> Result<()> {
 
     Ok(())
 }
+
 
 fn extract_brace_content(chars: &[char], start: usize) -> (String, usize) {
     let mut i = start;
@@ -722,14 +606,12 @@ fn extract_brace_content(chars: &[char], start: usize) -> (String, usize) {
             '}' => depth -= 1,
             _ => {}
         }
-        if depth > 0 {
-            i += 1;
-        }
+        if depth > 0 { i += 1 }
     }
     let inner: String = chars[start..i].iter().collect();
-    let end = if i < chars.len() { i + 1 } else { i };
-    (inner, end)
+    (inner, if i < chars.len() { i + 1 } else { i })
 }
+
 
 fn split_format_spec(inner: &str) -> (&str, Option<String>) {
     match inner.rfind(':') {

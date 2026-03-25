@@ -1,12 +1,10 @@
 use crate::rules;
 
+
 pub fn calculate_score(tag_names: &[&str]) -> f64 {
-    tag_names
-        .iter()
-        .filter_map(|name| rules::lookup(name))
-        .map(|def| def.score)
-        .sum()
+    tag_names.iter().filter_map(|name| rules::lookup(name)).map(|def| def.score).sum()
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -19,8 +17,7 @@ mod tests {
 
     #[test]
     fn multiple_tags_sum_scores() {
-        let score = calculate_score(&["sniper", "blatant_cheater"]);
-        assert_eq!(score, 15.0);
+        assert_eq!(calculate_score(&["sniper", "blatant_cheater"]), 15.0);
     }
 
     #[test]

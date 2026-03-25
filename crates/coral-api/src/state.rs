@@ -6,6 +6,7 @@ use database::Database;
 
 use crate::discord::DiscordResolver;
 
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Database>,
@@ -19,6 +20,7 @@ pub struct AppState {
     pub discord: Arc<DiscordResolver>,
 }
 
+
 impl AppState {
     pub fn new(
         db: Database,
@@ -29,20 +31,16 @@ impl AppState {
         redis: RedisPool,
         discord_token: Option<String>,
     ) -> Self {
-        let event_publisher = EventPublisher::new(redis.clone());
-        let rate_limiter = RateLimiter::new(redis.clone());
-        let discord = DiscordResolver::new(discord_token.unwrap_or_default());
-
         Self {
+            event_publisher: EventPublisher::new(redis.clone()),
+            rate_limiter: RateLimiter::new(redis.clone()),
+            discord: Arc::new(DiscordResolver::new(discord_token.unwrap_or_default())),
             db: Arc::new(db),
             hypixel: Arc::new(hypixel),
             mojang: Arc::new(mojang),
             skin_provider,
             internal_api_key,
             redis,
-            event_publisher,
-            rate_limiter,
-            discord: Arc::new(discord),
         }
     }
 }

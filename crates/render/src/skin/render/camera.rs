@@ -1,5 +1,6 @@
 use glam::{Mat4, Vec3};
 
+
 pub struct Camera {
     pub position: Vec3,
     pub target: Vec3,
@@ -8,6 +9,7 @@ pub struct Camera {
     pub near: f32,
     pub far: f32,
 }
+
 
 impl Camera {
     pub fn for_full_body() -> Self {
@@ -36,11 +38,11 @@ impl Camera {
         Mat4::look_at_rh(self.position, self.target, self.up)
     }
 
-    pub fn projection_matrix(&self, aspect_ratio: f32) -> Mat4 {
-        Mat4::perspective_rh(self.fov.to_radians(), aspect_ratio, self.near, self.far)
+    pub fn projection_matrix(&self, aspect: f32) -> Mat4 {
+        Mat4::perspective_rh(self.fov.to_radians(), aspect, self.near, self.far)
     }
 
-    pub fn view_projection_matrix(&self, aspect_ratio: f32) -> Mat4 {
-        self.projection_matrix(aspect_ratio) * self.view_matrix()
+    pub fn view_projection_matrix(&self, aspect: f32) -> Mat4 {
+        self.projection_matrix(aspect) * self.view_matrix()
     }
 }

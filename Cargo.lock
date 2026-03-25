@@ -676,6 +676,7 @@ dependencies = [
  "coral-redis",
  "database",
  "dotenvy",
+ "form_urlencoded",
  "hypixel",
  "image",
  "redis",

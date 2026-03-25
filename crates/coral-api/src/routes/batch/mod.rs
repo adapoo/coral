@@ -15,6 +15,7 @@ use crate::state::AppState;
 
 const MAX_BATCH_SIZE: usize = 100;
 
+
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct BatchRequest {
     pub uuids: Vec<String>,
@@ -25,9 +26,11 @@ pub(crate) struct BatchResponse {
     pub players: HashMap<String, Vec<TagResponse>>,
 }
 
+
 pub fn router() -> Router<AppState> {
     Router::new().route("/players", post(batch_lookup))
 }
+
 
 #[utoipa::path(
     post,
@@ -42,38 +45,23 @@ pub fn router() -> Router<AppState> {
 )]
 pub async fn batch_lookup(
     State(state): State<AppState>,
-    Json(request): Json<BatchRequest>,
+    Json(req): Json<BatchRequest>,
 ) -> Result<Json<BatchResponse>, ApiError> {
-    if request.uuids.is_empty() {
+    if req.uuids.is_empty() {
         return Err(ApiError::BadRequest("uuids array is empty".into()));
     }
-
-    if request.uuids.len() > MAX_BATCH_SIZE {
-        return Err(ApiError::BadRequest(format!(
-            "batch size exceeds maximum of {MAX_BATCH_SIZE}"
-        )));
+    if req.uuids.len() > MAX_BATCH_SIZE {
+        return Err(ApiError::BadRequest(format!("batch size exceeds maximum of {MAX_BATCH_SIZE}")));
     }
 
-    let uuids: Vec<String> = request
-        .uuids
-        .iter()
-        .filter(|u| is_uuid(u))
-        .map(|u| normalize_uuid(u))
-        .collect();
+    let uuids: Vec<String> = req.uuids.iter().filter(|u| is_uuid(u)).map(|u| normalize_uuid(u)).collect();
 
-    let repo = BlacklistRepository::new(state.db.pool());
-
-    let results = repo
+    let players = BlacklistRepository::new(state.db.pool())
         .get_players_batch(&uuids)
         .await
-        .map_err(|e| ApiError::Internal(format!("batch lookup failed: {e}")))?;
-
-    let players = results
+        .map_err(|e| ApiError::Internal(format!("batch lookup failed: {e}")))?
         .into_iter()
-        .map(|(uuid, tags)| {
-            let tag_responses = tags.iter().map(TagResponse::from_db).collect();
-            (uuid, tag_responses)
-        })
+        .map(|(uuid, tags)| (uuid, tags.iter().map(TagResponse::from_db).collect()))
         .collect();
 
     Ok(Json(BatchResponse { players }))

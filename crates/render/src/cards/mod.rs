@@ -1,5 +1,3 @@
-//! Stats card compositions.
-
 pub mod bedwars;
 pub mod common;
 pub mod prestiges;

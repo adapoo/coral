@@ -1,5 +1,6 @@
 use glam::Vec2;
 
+
 #[derive(Debug, Clone, Copy)]
 pub struct FaceUv {
     pub top_left: Vec2,
@@ -7,6 +8,7 @@ pub struct FaceUv {
     pub bottom_left: Vec2,
     pub bottom_right: Vec2,
 }
+
 
 impl FaceUv {
     pub fn new(x1: u16, y1: u16, x2: u16, y2: u16) -> Self {
@@ -29,6 +31,7 @@ impl FaceUv {
     }
 }
 
+
 #[derive(Debug, Clone, Copy)]
 pub struct CubeFaceUvs {
     pub front: FaceUv,
@@ -38,6 +41,7 @@ pub struct CubeFaceUvs {
     pub top: FaceUv,
     pub bottom: FaceUv,
 }
+
 
 pub fn box_uv(u: u16, v: u16, [w, h, d]: [u16; 3]) -> CubeFaceUvs {
     CubeFaceUvs {

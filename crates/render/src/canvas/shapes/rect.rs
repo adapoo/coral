@@ -1,9 +1,8 @@
 use image::Rgba;
 
 use super::is_outside_rounded_rect;
-use crate::canvas::color::{BOX_BACKGROUND, blend};
-use crate::canvas::context::DrawContext;
-use crate::canvas::shape::Shape;
+use crate::canvas::{color::{BOX_BACKGROUND, blend}, context::DrawContext, shape::Shape};
+
 
 pub struct RoundedRect {
     width: u32,
@@ -13,6 +12,7 @@ pub struct RoundedRect {
     padding: (u32, u32),
     child: Option<Box<dyn Shape>>,
 }
+
 
 impl RoundedRect {
     pub fn new(width: u32, height: u32) -> Self {
@@ -47,33 +47,27 @@ impl RoundedRect {
     }
 }
 
+
 impl Shape for RoundedRect {
     fn draw(&self, ctx: &mut DrawContext) {
         let (cw, ch) = ctx.buffer.dimensions();
         let radius = self.corner_radius.min(self.width / 2).min(self.height / 2);
-
         for py in 0..self.height {
             for px in 0..self.width {
                 let cx = (ctx.x + px as i32) as u32;
                 let cy = (ctx.y + py as i32) as u32;
-
                 if cx >= cw || cy >= ch {
                     continue;
                 }
-
                 if is_outside_rounded_rect(px, py, self.width, self.height, radius) {
                     continue;
                 }
-
                 let bg = *ctx.buffer.get_pixel(cx, cy);
-                let blended = blend(bg, self.background);
-                ctx.buffer.put_pixel(cx, cy, blended);
+                ctx.buffer.put_pixel(cx, cy, blend(bg, self.background));
             }
         }
-
         if let Some(child) = &self.child {
-            let mut child_ctx = ctx.at(self.padding.0 as i32, self.padding.1 as i32);
-            child.draw(&mut child_ctx);
+            child.draw(&mut ctx.at(self.padding.0 as i32, self.padding.1 as i32));
         }
     }
 

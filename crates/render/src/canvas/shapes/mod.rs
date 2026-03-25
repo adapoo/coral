@@ -14,45 +14,17 @@ pub use spacer::Spacer;
 pub use text::{Text, TextBlock};
 pub use text_box::{Align, TextBox};
 
-pub(crate) fn is_outside_rounded_rect(
-    px: u32,
-    py: u32,
-    width: u32,
-    height: u32,
-    radius: u32,
-) -> bool {
-    if radius == 0 {
+
+pub(crate) fn is_outside_rounded_rect(px: u32, py: u32, w: u32, h: u32, r: u32) -> bool {
+    if r == 0 {
         return false;
     }
-
-    let in_top_left = px < radius && py < radius;
-    let in_top_right = px >= width - radius && py < radius;
-    let in_bottom_left = px < radius && py >= height - radius;
-    let in_bottom_right = px >= width - radius && py >= height - radius;
-
-    if in_top_left {
-        let dx = radius - px;
-        let dy = radius - py;
-        return dx * dx + dy * dy > radius * radius;
-    }
-
-    if in_top_right {
-        let dx = px - (width - radius - 1);
-        let dy = radius - py;
-        return dx * dx + dy * dy > radius * radius;
-    }
-
-    if in_bottom_left {
-        let dx = radius - px;
-        let dy = py - (height - radius - 1);
-        return dx * dx + dy * dy > radius * radius;
-    }
-
-    if in_bottom_right {
-        let dx = px - (width - radius - 1);
-        let dy = py - (height - radius - 1);
-        return dx * dx + dy * dy > radius * radius;
-    }
-
-    false
+    let check = |in_corner: bool, dx: u32, dy: u32| -> Option<bool> {
+        in_corner.then(|| dx * dx + dy * dy > r * r)
+    };
+    check(px < r && py < r, r - px, r - py)
+        .or_else(|| check(px >= w - r && py < r, px - (w - r - 1), r - py))
+        .or_else(|| check(px < r && py >= h - r, r - px, py - (h - r - 1)))
+        .or_else(|| check(px >= w - r && py >= h - r, px - (w - r - 1), py - (h - r - 1)))
+        .unwrap_or(false)
 }

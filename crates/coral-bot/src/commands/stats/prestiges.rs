@@ -1,33 +1,27 @@
-use std::io::Cursor;
-
 use anyhow::Result;
-use serenity::all::{
-    CommandInteraction, Context, CreateAttachment, CreateCommand, EditInteractionResponse,
-};
+use serenity::all::*;
 
 use crate::framework::Data;
 use crate::rendering::render_prestiges;
+use super::encode_png;
+
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("prestiges").description("View Bedwars star prestiges 100-5000")
 }
 
+
 #[allow(unused_variables)]
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     command.defer(&ctx.http).await?;
 
-    let image = render_prestiges();
-
-    let mut png_data = Cursor::new(Vec::new());
-    image.write_to(&mut png_data, image::ImageFormat::Png)?;
+    let png = encode_png(&render_prestiges())?;
 
     command
         .edit_response(
             &ctx.http,
-            EditInteractionResponse::new().new_attachment(CreateAttachment::bytes(
-                png_data.into_inner(),
-                "prestiges.png",
-            )),
+            EditInteractionResponse::new()
+                .new_attachment(CreateAttachment::bytes(png, "prestiges.png")),
         )
         .await?;
 

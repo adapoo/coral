@@ -2,14 +2,14 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::error::ErrorResponse;
-use crate::responses::{PlayerStatsResponse, PlayerTagsResponse, TagResponse, CubelifyResponse};
+use crate::responses::*;
 use crate::routes::batch::{BatchRequest, BatchResponse};
-use crate::routes::tags::{AddTagRequest, LockRequest, OverwriteTagRequest};
-use crate::routes::tags::{SuccessResponse, TagIdResponse};
+use crate::routes::cubelify::CubelifyQuery;
 use crate::routes::guild::{GuildQuery, GuildResponse};
 use crate::routes::resolve::ResolveResponse;
-use crate::routes::verify::{StoreCodeRequest, RedeemCodeResponse};
-use crate::routes::cubelify::CubelifyQuery;
+use crate::routes::tags::{AddTagRequest, LockRequest, OverwriteTagRequest, SuccessResponse, TagIdResponse};
+use crate::routes::verify::{RedeemCodeResponse, StoreCodeRequest};
+
 
 #[derive(OpenApi)]
 #[openapi(
@@ -32,23 +32,13 @@ use crate::routes::cubelify::CubelifyQuery;
     ),
     components(
         schemas(
-            PlayerStatsResponse,
-            PlayerTagsResponse,
-            TagResponse,
-            CubelifyResponse,
+            PlayerStatsResponse, PlayerTagsResponse, TagResponse, CubelifyResponse,
             ErrorResponse,
-            BatchRequest,
-            BatchResponse,
-            AddTagRequest,
-            LockRequest,
-            OverwriteTagRequest,
-            SuccessResponse,
-            TagIdResponse,
-            GuildQuery,
-            GuildResponse,
+            BatchRequest, BatchResponse,
+            AddTagRequest, LockRequest, OverwriteTagRequest, SuccessResponse, TagIdResponse,
+            GuildQuery, GuildResponse,
             ResolveResponse,
-            StoreCodeRequest,
-            RedeemCodeResponse,
+            StoreCodeRequest, RedeemCodeResponse,
             CubelifyQuery,
         )
     ),
@@ -63,6 +53,7 @@ use crate::routes::cubelify::CubelifyQuery;
     ),
 )]
 pub struct ApiDoc;
+
 
 struct SecurityAddon;
 

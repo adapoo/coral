@@ -1,6 +1,7 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
+
 #[derive(Serialize, ToSchema)]
 pub struct PlayerStatsResponse {
     pub uuid: String,
@@ -13,11 +14,13 @@ pub struct PlayerStatsResponse {
     pub skin_url: Option<String>,
 }
 
+
 #[derive(Serialize, ToSchema)]
 pub struct PlayerTagsResponse {
     pub uuid: String,
     pub tags: Vec<TagResponse>,
 }
+
 
 #[derive(Serialize, ToSchema)]
 pub struct TagResponse {
@@ -29,17 +32,20 @@ pub struct TagResponse {
     pub hide_username: bool,
 }
 
+
 #[derive(Serialize, ToSchema)]
 pub struct CubelifyResponse {
     pub score: CubelifyScore,
     pub tags: Vec<CubelifyTag>,
 }
 
+
 #[derive(Serialize, ToSchema)]
 pub struct CubelifyScore {
     pub value: f64,
     pub mode: &'static str,
 }
+
 
 #[derive(Serialize, ToSchema)]
 pub struct CubelifyTag {
@@ -50,13 +56,11 @@ pub struct CubelifyTag {
     pub text: Option<String>,
 }
 
+
 impl CubelifyResponse {
     pub fn error(message: &str, icon: &str) -> Self {
         Self {
-            score: CubelifyScore {
-                value: 0.0,
-                mode: "add",
-            },
+            score: CubelifyScore { value: 0.0, mode: "add" },
             tags: vec![CubelifyTag {
                 icon: icon.to_string(),
                 color: 0xFF0000,
@@ -66,6 +70,7 @@ impl CubelifyResponse {
         }
     }
 }
+
 
 impl TagResponse {
     pub fn from_db(tag: &database::PlayerTagRow) -> Self {

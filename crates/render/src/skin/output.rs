@@ -1,5 +1,6 @@
 use image::{ImageEncoder, RgbaImage};
 
+
 #[derive(Debug, Clone)]
 pub enum OutputType {
     FullBody { width: u32, height: u32 },
@@ -7,33 +8,25 @@ pub enum OutputType {
     Face { size: u32 },
 }
 
+
 impl OutputType {
-    pub fn full_body(width: u32, height: u32) -> Self {
-        Self::FullBody { width, height }
-    }
-
-    pub fn head(width: u32, height: u32) -> Self {
-        Self::Head { width, height }
-    }
-
-    pub fn face(size: u32) -> Self {
-        Self::Face { size }
-    }
+    pub fn full_body(width: u32, height: u32) -> Self { Self::FullBody { width, height } }
+    pub fn head(width: u32, height: u32) -> Self { Self::Head { width, height } }
+    pub fn face(size: u32) -> Self { Self::Face { size } }
 }
+
 
 pub struct RenderOutput {
     pub image: RgbaImage,
 }
 
+
 impl RenderOutput {
-    pub fn into_image(self) -> RgbaImage {
-        self.image
-    }
+    pub fn into_image(self) -> RgbaImage { self.image }
 
     pub fn to_png_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        let encoder = image::codecs::png::PngEncoder::new(&mut bytes);
-        encoder
+        image::codecs::png::PngEncoder::new(&mut bytes)
             .write_image(
                 &self.image,
                 self.image.width(),

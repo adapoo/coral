@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 
+
 #[derive(Debug, Clone, FromRow)]
 pub struct MinecraftAccount {
     pub id: i64,
@@ -9,23 +10,21 @@ pub struct MinecraftAccount {
     pub added_at: DateTime<Utc>,
 }
 
+
 pub struct AccountRepository<'a> {
     pool: &'a PgPool,
 }
 
+
 impl<'a> AccountRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self {
-        Self { pool }
-    }
+    pub fn new(pool: &'a PgPool) -> Self { Self { pool } }
 
     pub async fn add(&self, member_id: i64, uuid: &str) -> Result<MinecraftAccount, sqlx::Error> {
         sqlx::query_as(
-            r#"
-            INSERT INTO minecraft_accounts (member_id, uuid)
-            VALUES ($1, $2)
-            ON CONFLICT (member_id, uuid) DO UPDATE SET member_id = EXCLUDED.member_id
-            RETURNING id, member_id, uuid, added_at
-            "#,
+            "INSERT INTO minecraft_accounts (member_id, uuid)
+             VALUES ($1, $2)
+             ON CONFLICT (member_id, uuid) DO UPDATE SET member_id = EXCLUDED.member_id
+             RETURNING id, member_id, uuid, added_at",
         )
         .bind(member_id)
         .bind(uuid)
@@ -34,28 +33,20 @@ impl<'a> AccountRepository<'a> {
     }
 
     pub async fn remove(&self, member_id: i64, uuid: &str) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM minecraft_accounts
-            WHERE member_id = $1 AND uuid = $2
-            "#,
-        )
-        .bind(member_id)
-        .bind(uuid)
-        .execute(self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
+        sqlx::query("DELETE FROM minecraft_accounts WHERE member_id = $1 AND uuid = $2")
+            .bind(member_id)
+            .bind(uuid)
+            .execute(self.pool)
+            .await
+            .map(|r| r.rows_affected() > 0)
     }
 
     pub async fn list(&self, member_id: i64) -> Result<Vec<MinecraftAccount>, sqlx::Error> {
         sqlx::query_as(
-            r#"
-            SELECT id, member_id, uuid, added_at
-            FROM minecraft_accounts
-            WHERE member_id = $1
-            ORDER BY added_at
-            "#,
+            "SELECT id, member_id, uuid, added_at
+             FROM minecraft_accounts
+             WHERE member_id = $1
+             ORDER BY added_at",
         )
         .bind(member_id)
         .fetch_all(self.pool)
@@ -64,15 +55,13 @@ impl<'a> AccountRepository<'a> {
 
     pub async fn is_owned_by(&self, uuid: &str, discord_id: i64) -> Result<bool, sqlx::Error> {
         let row: Option<(bool,)> = sqlx::query_as(
-            r#"
-            SELECT EXISTS(
+            "SELECT EXISTS(
                 SELECT 1 FROM members WHERE discord_id = $2 AND uuid = $1
                 UNION ALL
                 SELECT 1 FROM minecraft_accounts ma
                 JOIN members m ON m.id = ma.member_id
                 WHERE ma.uuid = $1 AND m.discord_id = $2
-            )
-            "#,
+            )",
         )
         .bind(uuid)
         .bind(discord_id)

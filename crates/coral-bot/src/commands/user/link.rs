@@ -1,9 +1,5 @@
 use anyhow::Result;
-use serenity::all::{
-    ButtonStyle, CommandInteraction, Context, CreateActionRow, CreateButton, CreateCommand,
-    CreateContainerComponent, CreateInteractionResponse, CreateInteractionResponseMessage,
-    CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, Member, MessageFlags, RoleId,
-};
+use serenity::all::*;
 
 use database::{GuildConfigRepository, MemberRepository};
 
@@ -11,9 +7,11 @@ use crate::commands::admin::accounts_panel;
 use crate::framework::Data;
 use crate::utils::{separator, text};
 
+
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("link").description("Link or manage your Minecraft account")
 }
+
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     let discord_id = command.user.id.get();
@@ -39,6 +37,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     Ok(())
 }
+
 
 pub fn build_link_parts(
     matches: &[(String, String)],
@@ -66,9 +65,7 @@ pub fn build_link_parts(
             CreateActionRow::SelectMenu(
                 CreateSelectMenu::new(
                     format!("{prefix}_link_pick:{target_id}"),
-                    CreateSelectMenuKind::String {
-                        options: options.into(),
-                    },
+                    CreateSelectMenuKind::String { options: options.into() },
                 )
                 .placeholder("Select an account"),
             ),
@@ -88,7 +85,6 @@ pub fn build_link_parts(
                     .style(ButtonStyle::Primary),
             ]),
         ));
-
         parts.push(separator());
     }
 
@@ -109,15 +105,12 @@ pub fn build_link_parts(
     parts
 }
 
+
 pub async fn handle_guild_join(ctx: &Context, new_member: &Member, data: &Data) -> Result<()> {
     let discord_id = new_member.user.id.get() as i64;
     let members = MemberRepository::new(data.db.pool());
 
-    let uuid = match members
-        .get_by_discord_id(discord_id)
-        .await?
-        .and_then(|m| m.uuid)
-    {
+    let uuid = match members.get_by_discord_id(discord_id).await?.and_then(|m| m.uuid) {
         Some(uuid) => uuid,
         None => {
             assign_unlinked_role(ctx, data, new_member).await;
@@ -167,6 +160,7 @@ pub async fn handle_guild_join(ctx: &Context, new_member: &Member, data: &Data) 
     Ok(())
 }
 
+
 async fn assign_unlinked_role(ctx: &Context, data: &Data, member: &Member) {
     let config = match GuildConfigRepository::new(data.db.pool())
         .get(member.guild_id.get() as i64)
@@ -177,8 +171,6 @@ async fn assign_unlinked_role(ctx: &Context, data: &Data, member: &Member) {
     };
 
     if let Some(role_id) = config.unlinked_role_id {
-        let _ = member
-            .add_role(&ctx.http, RoleId::new(role_id as u64), None)
-            .await;
+        let _ = member.add_role(&ctx.http, RoleId::new(role_id as u64), None).await;
     }
 }

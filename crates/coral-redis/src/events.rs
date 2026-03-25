@@ -6,6 +6,7 @@ use crate::RedisPool;
 
 const CHANNEL: &str = "blacklist:events";
 
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum BlacklistEvent {
@@ -45,10 +46,12 @@ pub enum BlacklistEvent {
     },
 }
 
+
 #[derive(Clone)]
 pub struct EventPublisher {
     pool: RedisPool,
 }
+
 
 impl EventPublisher {
     pub fn new(pool: RedisPool) -> Self {
@@ -56,22 +59,20 @@ impl EventPublisher {
     }
 
     pub async fn publish(&self, event: &BlacklistEvent) {
-        let payload = match serde_json::to_string(event) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("Failed to serialize blacklist event: {e}");
-                return;
-            }
+        let Ok(payload) = serde_json::to_string(event).inspect_err(|e| {
+            tracing::error!("Failed to serialize blacklist event: {e}");
+        }) else {
+            return;
         };
-
-        let mut conn = self.pool.connection();
-        if let Err(e) = conn.publish::<_, _, ()>(CHANNEL, &payload).await {
+        if let Err(e) = self.pool.connection().publish::<_, _, ()>(CHANNEL, &payload).await {
             tracing::error!("Failed to publish blacklist event: {e}");
         }
     }
 }
 
+
 pub struct EventSubscriber;
+
 
 impl EventSubscriber {
     pub async fn run<F, Fut>(redis_url: &str, handler: F) -> Result<(), redis::RedisError>
@@ -85,14 +86,11 @@ impl EventSubscriber {
 
         let mut stream = pubsub.into_on_message();
         while let Some(msg) = stream.next().await {
-            let payload: String = match msg.get_payload() {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!("Failed to read event payload: {e}");
-                    continue;
-                }
+            let Ok(payload) = msg.get_payload::<String>().inspect_err(|e| {
+                tracing::error!("Failed to read event payload: {e}");
+            }) else {
+                continue;
             };
-
             match serde_json::from_str::<BlacklistEvent>(&payload) {
                 Ok(event) => handler(event).await,
                 Err(e) => tracing::error!("Failed to deserialize event: {e}"),

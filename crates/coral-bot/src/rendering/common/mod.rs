@@ -8,14 +8,14 @@ pub use prestige::*;
 
 use mctext::{MCText, NamedColor};
 
+
 pub fn stat_line(label: &str, value: &str, color: NamedColor) -> MCText {
     MCText::new()
-        .span(label)
-        .color(NamedColor::Gray)
-        .then(value)
-        .color(color)
+        .span(label).color(NamedColor::Gray)
+        .then(value).color(color)
         .build()
 }
+
 
 pub fn color_name_to_named(name: &str) -> Option<NamedColor> {
     match name.to_uppercase().as_str() {

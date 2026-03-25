@@ -1,7 +1,8 @@
 use mctext::NamedColor;
 
-pub fn wlr(value: f64) -> NamedColor {
-    match value {
+
+pub fn wlr(v: f64) -> NamedColor {
+    match v {
         v if v >= 30.0 => NamedColor::DarkPurple,
         v if v >= 15.0 => NamedColor::LightPurple,
         v if v >= 9.0 => NamedColor::DarkRed,
@@ -15,8 +16,9 @@ pub fn wlr(value: f64) -> NamedColor {
     }
 }
 
-pub fn fkdr(value: f64) -> NamedColor {
-    match value {
+
+pub fn fkdr(v: f64) -> NamedColor {
+    match v {
         v if v >= 100.0 => NamedColor::DarkPurple,
         v if v >= 50.0 => NamedColor::LightPurple,
         v if v >= 30.0 => NamedColor::DarkRed,
@@ -30,8 +32,9 @@ pub fn fkdr(value: f64) -> NamedColor {
     }
 }
 
-pub fn kdr(value: f64) -> NamedColor {
-    match value {
+
+pub fn kdr(v: f64) -> NamedColor {
+    match v {
         v if v >= 8.0 => NamedColor::DarkPurple,
         v if v >= 7.0 => NamedColor::LightPurple,
         v if v >= 6.0 => NamedColor::DarkRed,
@@ -45,8 +48,9 @@ pub fn kdr(value: f64) -> NamedColor {
     }
 }
 
-pub fn bblr(value: f64) -> NamedColor {
-    match value {
+
+pub fn bblr(v: f64) -> NamedColor {
+    match v {
         v if v >= 20.0 => NamedColor::DarkPurple,
         v if v >= 10.0 => NamedColor::LightPurple,
         v if v >= 6.0 => NamedColor::DarkRed,
@@ -60,8 +64,9 @@ pub fn bblr(value: f64) -> NamedColor {
     }
 }
 
-pub fn wins(value: u64) -> NamedColor {
-    match value {
+
+pub fn wins(v: u64) -> NamedColor {
+    match v {
         v if v >= 30000 => NamedColor::DarkPurple,
         v if v >= 15000 => NamedColor::LightPurple,
         v if v >= 7500 => NamedColor::DarkRed,
@@ -75,8 +80,9 @@ pub fn wins(value: u64) -> NamedColor {
     }
 }
 
-pub fn final_kills(value: u64) -> NamedColor {
-    match value {
+
+pub fn final_kills(v: u64) -> NamedColor {
+    match v {
         v if v >= 100000 => NamedColor::DarkPurple,
         v if v >= 50000 => NamedColor::LightPurple,
         v if v >= 25000 => NamedColor::DarkRed,
@@ -90,8 +96,9 @@ pub fn final_kills(value: u64) -> NamedColor {
     }
 }
 
-pub fn kills(value: u64) -> NamedColor {
-    match value {
+
+pub fn kills(v: u64) -> NamedColor {
+    match v {
         v if v >= 75000 => NamedColor::DarkPurple,
         v if v >= 37500 => NamedColor::LightPurple,
         v if v >= 18750 => NamedColor::DarkRed,
@@ -105,8 +112,9 @@ pub fn kills(value: u64) -> NamedColor {
     }
 }
 
-pub fn beds_broken(value: u64) -> NamedColor {
-    match value {
+
+pub fn beds_broken(v: u64) -> NamedColor {
+    match v {
         v if v >= 50000 => NamedColor::DarkPurple,
         v if v >= 25000 => NamedColor::LightPurple,
         v if v >= 12500 => NamedColor::DarkRed,
@@ -120,8 +128,9 @@ pub fn beds_broken(value: u64) -> NamedColor {
     }
 }
 
-pub fn winstreak(value: u64) -> NamedColor {
-    match value {
+
+pub fn winstreak(v: u64) -> NamedColor {
+    match v {
         v if v >= 500 => NamedColor::DarkPurple,
         v if v >= 250 => NamedColor::LightPurple,
         v if v >= 100 => NamedColor::DarkRed,

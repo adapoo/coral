@@ -1,5 +1,3 @@
-//! 3D Minecraft skin renderer.
-
 mod model;
 mod output;
 mod render;
@@ -12,6 +10,7 @@ pub use skin::Skin;
 
 use thiserror::Error;
 
+
 #[derive(Debug, Error)]
 pub enum SkinError {
     #[error("invalid skin dimensions: expected 64x64, got {0}x{1}")]
@@ -22,9 +21,10 @@ pub enum SkinError {
     Render(String),
 }
 
+
 pub type Result<T> = std::result::Result<T, SkinError>;
 
+
 pub fn render(skin: &Skin, pose: &Pose, output: OutputType) -> Result<RenderOutput> {
-    let renderer = Renderer::new()?;
-    renderer.render(skin, pose, output)
+    Renderer::new()?.render(skin, pose, output)
 }

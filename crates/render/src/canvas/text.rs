@@ -1,19 +1,19 @@
 use mctext::{
-    LayoutEngine, LayoutOptions, MCText, SoftwareRenderer, TextRenderer as McTextRenderer,
+    LayoutEngine, LayoutOptions, MCText, SoftwareRenderer,
+    TextRenderer as McTextRenderer,
 };
 
 use super::font_system;
 
+
 pub struct TextRenderer;
 
+
 impl TextRenderer {
-    pub fn new() -> Self {
-        Self
-    }
+    pub fn new() -> Self { Self }
 
     pub fn measure(&self, text: &MCText, size: f32) -> (f32, f32) {
-        let layout_engine = LayoutEngine::new(font_system());
-        layout_engine.measure(text, size)
+        LayoutEngine::new(font_system()).measure(text, size)
     }
 
     pub fn draw(
@@ -28,17 +28,15 @@ impl TextRenderer {
         shadow: bool,
     ) {
         let options = LayoutOptions::new(size).with_shadow(shadow);
-        let layout_engine = LayoutEngine::new(font_system());
-        let layout = layout_engine.layout_at(text, x, y, &options);
-
+        let engine = LayoutEngine::new(font_system());
+        let layout = engine.layout_at(text, x, y, &options);
         let mut renderer =
             SoftwareRenderer::new(font_system(), buffer, width as usize, height as usize);
         let _ = renderer.render_layout(&layout);
     }
 }
 
+
 impl Default for TextRenderer {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }

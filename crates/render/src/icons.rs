@@ -4,10 +4,8 @@ use image::{DynamicImage, RgbaImage, imageops::FilterType};
 
 const URCHIN_PNG: &[u8] = include_bytes!("../assets/urchin.png");
 const ANTISNIPER_PNG: &[u8] = include_bytes!("../assets/antisniper.png");
-
 const MDI_ALERT_OCTAGRAM: &[u8] = include_bytes!("../assets/mdi_alert_octagram.png");
-const MDI_ALERT_OCTAGRAM_OUTLINE: &[u8] =
-    include_bytes!("../assets/mdi_alert_octagram_outline.png");
+const MDI_ALERT_OCTAGRAM_OUTLINE: &[u8] = include_bytes!("../assets/mdi_alert_octagram_outline.png");
 const MDI_TARGET_VARIANT: &[u8] = include_bytes!("../assets/mdi_target_variant.png");
 const MDI_ALERT_RHOMBUS_OUTLINE: &[u8] = include_bytes!("../assets/mdi_alert_rhombus_outline.png");
 const MDI_ACCOUNT_ALERT: &[u8] = include_bytes!("../assets/mdi_account_alert.png");
@@ -22,27 +20,24 @@ static MDI_ALERT_RHOMBUS_OUTLINE_DECODED: OnceLock<RgbaImage> = OnceLock::new();
 static MDI_ACCOUNT_ALERT_DECODED: OnceLock<RgbaImage> = OnceLock::new();
 static MDI_INFORMATION_OUTLINE_DECODED: OnceLock<RgbaImage> = OnceLock::new();
 
+
 fn decode_once<'a>(lock: &'a OnceLock<RgbaImage>, bytes: &[u8]) -> &'a RgbaImage {
-    lock.get_or_init(|| {
-        image::load_from_memory(bytes)
-            .expect("embedded icon is valid")
-            .to_rgba8()
-    })
+    lock.get_or_init(|| image::load_from_memory(bytes).expect("embedded icon is valid").to_rgba8())
 }
+
 
 pub fn urchin(size: u32, corner_radius: u32) -> DynamicImage {
-    let decoded = decode_once(&URCHIN_DECODED, URCHIN_PNG);
-    resize_and_round(decoded, size, corner_radius)
+    resize_and_round(decode_once(&URCHIN_DECODED, URCHIN_PNG), size, corner_radius)
 }
 
+
 pub fn antisniper(size: u32, corner_radius: u32) -> DynamicImage {
-    let decoded = decode_once(&ANTISNIPER_DECODED, ANTISNIPER_PNG);
-    resize_and_round(decoded, size, corner_radius)
+    resize_and_round(decode_once(&ANTISNIPER_DECODED, ANTISNIPER_PNG), size, corner_radius)
 }
+
 
 fn resize_and_round(rgba: &RgbaImage, size: u32, corner_radius: u32) -> DynamicImage {
     let mut resized = image::imageops::resize(rgba, size, size, FilterType::Triangle);
-
     let r = (corner_radius as f32).min(size as f32 / 2.0);
     for py in 0..size {
         for px in 0..size {
@@ -56,9 +51,9 @@ fn resize_and_round(rgba: &RgbaImage, size: u32, corner_radius: u32) -> DynamicI
             }
         }
     }
-
     DynamicImage::ImageRgba8(resized)
 }
+
 
 fn corner_center(px: u32, py: u32, w: u32, h: u32, r: f32) -> (Option<f32>, Option<f32>) {
     let cx = if (px as f32) < r {
@@ -78,18 +73,17 @@ fn corner_center(px: u32, py: u32, w: u32, h: u32, r: f32) -> (Option<f32>, Opti
     (cx, cy)
 }
 
+
 pub fn tag_icon(mdi_name: &str, size: u32, color: u32) -> Option<DynamicImage> {
     let decoded = match mdi_name {
         "mdi-alert-octagram" => decode_once(&MDI_ALERT_OCTAGRAM_DECODED, MDI_ALERT_OCTAGRAM),
-        "mdi-alert-octagram-outline" => decode_once(
-            &MDI_ALERT_OCTAGRAM_OUTLINE_DECODED,
-            MDI_ALERT_OCTAGRAM_OUTLINE,
-        ),
+        "mdi-alert-octagram-outline" => {
+            decode_once(&MDI_ALERT_OCTAGRAM_OUTLINE_DECODED, MDI_ALERT_OCTAGRAM_OUTLINE)
+        }
         "mdi-target-variant" => decode_once(&MDI_TARGET_VARIANT_DECODED, MDI_TARGET_VARIANT),
-        "mdi-alert-rhombus-outline" => decode_once(
-            &MDI_ALERT_RHOMBUS_OUTLINE_DECODED,
-            MDI_ALERT_RHOMBUS_OUTLINE,
-        ),
+        "mdi-alert-rhombus-outline" => {
+            decode_once(&MDI_ALERT_RHOMBUS_OUTLINE_DECODED, MDI_ALERT_RHOMBUS_OUTLINE)
+        }
         "mdi-account-alert" => decode_once(&MDI_ACCOUNT_ALERT_DECODED, MDI_ACCOUNT_ALERT),
         "mdi-information-outline" => {
             decode_once(&MDI_INFORMATION_OUTLINE_DECODED, MDI_INFORMATION_OUTLINE)
@@ -98,11 +92,9 @@ pub fn tag_icon(mdi_name: &str, size: u32, color: u32) -> Option<DynamicImage> {
     };
 
     let mut resized = image::imageops::resize(decoded, size, size, FilterType::Triangle);
-
     let r = ((color >> 16) & 0xFF) as u8;
     let g = ((color >> 8) & 0xFF) as u8;
     let b = (color & 0xFF) as u8;
-
     for pixel in resized.pixels_mut() {
         if pixel[3] > 0 {
             pixel[0] = r;
@@ -110,6 +102,5 @@ pub fn tag_icon(mdi_name: &str, size: u32, color: u32) -> Option<DynamicImage> {
             pixel[2] = b;
         }
     }
-
     Some(DynamicImage::ImageRgba8(resized))
 }

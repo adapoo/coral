@@ -1,20 +1,17 @@
 use anyhow::Result;
-use serenity::all::{
-    ButtonStyle, CommandInteraction, ComponentInteraction, Context, CreateActionRow, CreateButton,
-    CreateCommand, CreateComponent, CreateContainer, CreateContainerComponent,
-    CreateInteractionResponse, CreateInteractionResponseMessage, CreateSection,
-    CreateSectionAccessory, MessageFlags,
-};
+use serenity::all::*;
 
 use database::{BlacklistRepository, MemberRepository};
 
-use crate::framework::{AccessRank, Data};
+use crate::framework::{AccessRank, AccessRankExt, Data};
 use crate::interact::{self, section_text};
 use crate::utils::{format_number, generate_api_key, resolve_username, separator, text};
+
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("dashboard").description("View your account dashboard and settings")
 }
+
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     let discord_id = command.user.id.get() as i64;
@@ -52,6 +49,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     Ok(())
 }
 
+
 pub async fn handle_regenerate_key(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -82,6 +80,7 @@ pub async fn handle_regenerate_key(
     Ok(())
 }
 
+
 pub async fn handle_confirm_regenerate_key(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -108,16 +107,14 @@ pub async fn handle_confirm_regenerate_key(
     interact::update_message(ctx, component, components).await
 }
 
+
 pub(crate) async fn build_dashboard_view(
     member: &database::Member,
     data: &Data,
 ) -> Vec<CreateComponent<'static>> {
     let discord_id = member.discord_id as u64;
     let rank = AccessRank::of(data, discord_id, Some(member));
-
     let mut parts: Vec<CreateContainerComponent> = vec![text("## Dashboard")];
-
-    // --- Account ---
 
     parts.push(separator());
 
@@ -125,7 +122,6 @@ pub(crate) async fn build_dashboard_view(
         Some(uuid) => {
             let username = resolve_username(uuid, data).await;
             let name = username.as_deref().unwrap_or(uuid);
-
             parts.push(CreateContainerComponent::Section(CreateSection::new(
                 vec![section_text(&format!("### Account\n**{name}**\n-# {uuid}"))],
                 CreateSectionAccessory::Button(
@@ -147,16 +143,12 @@ pub(crate) async fn build_dashboard_view(
         }
     }
 
-    // --- API Key ---
-
     parts.push(separator());
 
-    let api_key_text = if member.key_locked {
-        "### API Key\nLocked".into()
-    } else if let Some(key) = &member.api_key {
-        format!("### API Key\n||`{key}`||")
-    } else {
-        "### API Key\nNone".into()
+    let api_key_text = match (&member.key_locked, &member.api_key) {
+        (true, _) => "### API Key\nLocked".into(),
+        (_, Some(key)) => format!("### API Key\n||`{key}`||"),
+        _ => "### API Key\nNone".into(),
     };
 
     parts.push(CreateContainerComponent::Section(CreateSection::new(
@@ -176,8 +168,7 @@ pub(crate) async fn build_dashboard_view(
 
     parts.push(separator());
 
-    let blacklist_repo = BlacklistRepository::new(data.db.pool());
-    let total_tags = blacklist_repo
+    let total_tags = BlacklistRepository::new(data.db.pool())
         .count_tags_by_user(member.discord_id)
         .await
         .unwrap_or(0);

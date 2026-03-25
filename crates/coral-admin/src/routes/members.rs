@@ -1,17 +1,17 @@
-use axum::extract::{Path, Query, State};
-use axum::routing::get;
-use axum::{Json, Router};
+use axum::{extract::*, routing::get, Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::state::AppState;
 
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list))
         .route("/{id}", get(detail))
 }
+
 
 #[derive(Deserialize)]
 struct ListParams {
@@ -20,11 +20,13 @@ struct ListParams {
     search: Option<String>,
 }
 
+
 #[derive(Serialize)]
 struct ListResponse {
     total: i64,
     members: Vec<Summary>,
 }
+
 
 #[derive(Serialize, FromRow)]
 struct Summary {
@@ -41,6 +43,7 @@ struct Summary {
     has_api_key: bool,
 }
 
+
 #[derive(Serialize)]
 struct Detail {
     #[serde(flatten)]
@@ -48,6 +51,7 @@ struct Detail {
     ips: Vec<IpRecord>,
     alt_accounts: Vec<AltAccount>,
 }
+
 
 #[derive(Serialize, FromRow)]
 struct MemberRow {
@@ -67,6 +71,7 @@ struct MemberRow {
     updated_at: DateTime<Utc>,
 }
 
+
 #[derive(Serialize, FromRow)]
 struct IpRecord {
     ip_address: String,
@@ -74,11 +79,13 @@ struct IpRecord {
     last_seen: DateTime<Utc>,
 }
 
+
 #[derive(Serialize, FromRow)]
 struct AltAccount {
     uuid: String,
     added_at: DateTime<Utc>,
 }
+
 
 async fn list(
     State(state): State<AppState>,
@@ -98,7 +105,6 @@ async fn list(
             .fetch_one(pool)
             .await
             .unwrap_or(0);
-
             let members = sqlx::query_as::<_, Summary>(
                 r#"SELECT id, discord_id, uuid, join_date, request_count,
                           is_admin, is_mod, is_private, is_beta, key_locked,
@@ -113,15 +119,11 @@ async fn list(
             .fetch_all(pool)
             .await
             .unwrap_or_default();
-
             (total, members)
         }
         None => {
             let total = sqlx::query_scalar("SELECT COUNT(*) FROM members")
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-
+                .fetch_one(pool).await.unwrap_or(0);
             let members = sqlx::query_as::<_, Summary>(
                 r#"SELECT id, discord_id, uuid, join_date, request_count,
                           is_admin, is_mod, is_private, is_beta, key_locked,
@@ -134,13 +136,13 @@ async fn list(
             .fetch_all(pool)
             .await
             .unwrap_or_default();
-
             (total, members)
         }
     };
 
     Json(ListResponse { total, members })
 }
+
 
 async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> Json<Option<Detail>> {
     let pool = state.db.pool();
@@ -179,9 +181,5 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> Json<Opti
     .await
     .unwrap_or_default();
 
-    Json(Some(Detail {
-        member,
-        ips,
-        alt_accounts,
-    }))
+    Json(Some(Detail { member, ips, alt_accounts }))
 }

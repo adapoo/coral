@@ -1,7 +1,7 @@
 use image::DynamicImage;
 
-use crate::canvas::context::DrawContext;
-use crate::canvas::shape::Shape;
+use crate::canvas::{context::DrawContext, shape::Shape};
+
 
 pub struct Image<'a> {
     image: &'a DynamicImage,
@@ -9,13 +9,10 @@ pub struct Image<'a> {
     height: Option<u32>,
 }
 
+
 impl<'a> Image<'a> {
     pub fn new(image: &'a DynamicImage) -> Self {
-        Self {
-            image,
-            width: None,
-            height: None,
-        }
+        Self { image, width: None, height: None }
     }
 
     pub fn size(mut self, width: u32, height: u32) -> Self {
@@ -25,6 +22,7 @@ impl<'a> Image<'a> {
     }
 }
 
+
 impl Shape for Image<'_> {
     fn draw(&self, ctx: &mut DrawContext) {
         let rgba = self
@@ -32,7 +30,6 @@ impl Shape for Image<'_> {
             .as_rgba8()
             .map(std::borrow::Cow::Borrowed)
             .unwrap_or_else(|| std::borrow::Cow::Owned(self.image.to_rgba8()));
-
         match (self.width, self.height) {
             (Some(w), Some(h)) => {
                 let resized =

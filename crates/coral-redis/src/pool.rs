@@ -1,15 +1,15 @@
-use redis::Client;
-use redis::aio::ConnectionManager;
+use redis::{Client, aio::ConnectionManager};
+
 
 #[derive(Clone)]
 pub struct RedisPool {
     manager: ConnectionManager,
 }
 
+
 impl RedisPool {
     pub async fn connect(url: &str) -> Result<Self, redis::RedisError> {
-        let client = Client::open(url)?;
-        let manager = ConnectionManager::new(client).await?;
+        let manager = ConnectionManager::new(Client::open(url)?).await?;
         Ok(Self { manager })
     }
 

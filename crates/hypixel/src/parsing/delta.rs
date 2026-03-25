@@ -1,4 +1,7 @@
-use super::bedwars::{ModeStats, Stats, ratio};
+use chrono::{DateTime, Utc};
+
+use super::bedwars::{Mode, ModeStats, Stats, ratio};
+
 
 #[derive(Clone, Default)]
 pub struct SessionStats {
@@ -13,6 +16,7 @@ pub struct SessionStats {
     pub experience: u64,
     pub games_played: u64,
 }
+
 
 impl SessionStats {
     pub fn from_mode_stats(old: &ModeStats, new: &ModeStats) -> Self {
@@ -30,22 +34,12 @@ impl SessionStats {
         }
     }
 
-    pub fn wlr(&self) -> f64 {
-        ratio(self.wins, self.losses)
-    }
-
-    pub fn kdr(&self) -> f64 {
-        ratio(self.kills, self.deaths)
-    }
-
-    pub fn fkdr(&self) -> f64 {
-        ratio(self.final_kills, self.final_deaths)
-    }
-
-    pub fn bblr(&self) -> f64 {
-        ratio(self.beds_broken, self.beds_lost)
-    }
+    pub fn wlr(&self) -> f64 { ratio(self.wins, self.losses) }
+    pub fn kdr(&self) -> f64 { ratio(self.kills, self.deaths) }
+    pub fn fkdr(&self) -> f64 { ratio(self.final_kills, self.final_deaths) }
+    pub fn bblr(&self) -> f64 { ratio(self.beds_broken, self.beds_lost) }
 }
+
 
 pub struct SessionPlayerStats {
     pub username: String,
@@ -54,20 +48,14 @@ pub struct SessionPlayerStats {
     pub experience: u64,
     pub level_progress: f64,
     pub games_played: u64,
-    pub started: chrono::DateTime<chrono::Utc>,
+    pub started: DateTime<Utc>,
     pub session_stats: SessionStats,
 }
 
+
 impl SessionPlayerStats {
-    pub fn from_snapshots(
-        old: &Stats,
-        new: &Stats,
-        mode: super::bedwars::Mode,
-        started: chrono::DateTime<chrono::Utc>,
-    ) -> Self {
-        let old_mode = old.get_mode_stats(mode);
-        let new_mode = new.get_mode_stats(mode);
-        let mut session_stats = SessionStats::from_mode_stats(&old_mode, &new_mode);
+    pub fn from_snapshots(old: &Stats, new: &Stats, mode: Mode, started: DateTime<Utc>) -> Self {
+        let mut session_stats = SessionStats::from_mode_stats(&old.get_mode_stats(mode), &new.get_mode_stats(mode));
         session_stats.experience = new.experience.saturating_sub(old.experience);
         session_stats.games_played = new.games_played.saturating_sub(old.games_played);
 
@@ -76,15 +64,10 @@ impl SessionPlayerStats {
             display_name: new.display_name.clone(),
             rank_prefix: new.rank_prefix.clone(),
             experience: session_stats.experience,
-            level_progress: calculate_session_level_progress(old.experience, new.experience),
+            level_progress: session_stats.experience as f64 / 5000.0,
             games_played: session_stats.games_played,
             started,
             session_stats,
         }
     }
-}
-
-fn calculate_session_level_progress(old_exp: u64, new_exp: u64) -> f64 {
-    let exp_gained = new_exp.saturating_sub(old_exp);
-    exp_gained as f64 / 5000.0
 }

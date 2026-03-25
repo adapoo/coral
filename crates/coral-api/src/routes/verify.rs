@@ -7,6 +7,7 @@ use utoipa::ToSchema;
 
 use crate::state::AppState;
 
+
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct StoreCodeRequest {
     pub code: String,
@@ -20,11 +21,13 @@ pub struct RedeemCodeResponse {
     pub username: String,
 }
 
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/verify/codes", post(store_code))
         .route("/verify/codes/{code}", delete(redeem_code))
 }
+
 
 #[utoipa::path(
     post,
@@ -43,18 +46,17 @@ pub async fn store_code(
     State(state): State<AppState>,
     Json(body): Json<StoreCodeRequest>,
 ) -> StatusCode {
-    let mut conn = state.redis.connection();
     let uuid = match uuid::Uuid::parse_str(&body.uuid) {
         Ok(u) => u,
         Err(_) => return StatusCode::BAD_REQUEST,
     };
-
-    match coral_redis::verify::store_code(&mut conn, &body.code, uuid, &body.username).await {
+    match coral_redis::verify::store_code(&mut state.redis.connection(), &body.code, uuid, &body.username).await {
         Ok(true) => StatusCode::CREATED,
         Ok(false) => StatusCode::CONFLICT,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
+
 
 #[utoipa::path(
     delete,
@@ -73,11 +75,9 @@ pub async fn redeem_code(
     State(state): State<AppState>,
     Path(code): Path<String>,
 ) -> Result<Json<RedeemCodeResponse>, StatusCode> {
-    let mut conn = state.redis.connection();
-    let player = coral_redis::verify::redeem_code(&mut conn, &code)
+    let player = coral_redis::verify::redeem_code(&mut state.redis.connection(), &code)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
-
     Ok(Json(RedeemCodeResponse {
         uuid: player.uuid.simple().to_string(),
         username: player.username,

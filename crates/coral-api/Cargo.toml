@@ -31,6 +31,8 @@ redis.workspace = true
 uuid.workspace = true
 image.workspace = true
 
+form_urlencoded = "1"
+
 utoipa.workspace = true
 utoipa-axum.workspace = true
 utoipa-scalar.workspace = true
