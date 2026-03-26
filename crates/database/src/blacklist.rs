@@ -165,6 +165,33 @@ impl<'a> BlacklistRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
+    pub async fn modify_tag_full(
+        &self,
+        tag_id: i64,
+        tag_type: Option<&str>,
+        reason: Option<&str>,
+        added_by: Option<i64>,
+        hide_username: Option<bool>,
+        reset_time: bool,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query(
+            "UPDATE player_tags
+             SET tag_type = COALESCE($2, tag_type), reason = COALESCE($3, reason),
+                 added_by = COALESCE($4, added_by), hide_username = COALESCE($5, hide_username),
+                 added_on = CASE WHEN $6 THEN NOW() ELSE added_on END
+             WHERE id = $1 AND removed_on IS NULL",
+        )
+        .bind(tag_id)
+        .bind(tag_type)
+        .bind(reason)
+        .bind(added_by)
+        .bind(hide_username)
+        .bind(reset_time)
+        .execute(self.pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
+    }
+
     pub async fn lock_player(&self, uuid: &str, reason: &str, locked_by: i64) -> Result<bool, sqlx::Error> {
         let player = self.get_or_create_player(uuid).await?;
         sqlx::query(

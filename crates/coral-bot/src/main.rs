@@ -65,6 +65,7 @@ async fn init_data() -> Result<Data> {
         api: Arc::new(api),
         skin_provider,
         owner_ids: parse_owner_ids(),
+        home_guild_id: parse_guild_id("HOME_GUILD_ID"),
         blacklist_channel_id: parse_channel_id("BLACKLIST_CHANNEL_ID"),
         mod_channel_id: parse_channel_id("MOD_CHANNEL_ID"),
         review_forum_id: parse_channel_id("REVIEW_FORUM_ID"),
@@ -75,6 +76,7 @@ async fn init_data() -> Result<Data> {
         bedwars_images: Arc::new(Mutex::new(HashMap::new())),
         session_images: Arc::new(Mutex::new(HashMap::new())),
         pending_overwrites: Arc::new(Mutex::new(HashMap::new())),
+        pending_tag_changes: Arc::new(Mutex::new(HashMap::new())),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
         sync_progress: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -93,6 +95,11 @@ fn parse_owner_ids() -> Vec<u64> {
 
 fn parse_channel_id(name: &str) -> Option<ChannelId> {
     env::var(name).ok().and_then(|s| s.parse::<u64>().ok()).map(ChannelId::new)
+}
+
+
+fn parse_guild_id(name: &str) -> Option<GuildId> {
+    env::var(name).ok().and_then(|s| s.parse::<u64>().ok()).map(GuildId::new)
 }
 
 

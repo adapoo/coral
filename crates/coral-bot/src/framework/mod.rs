@@ -10,7 +10,7 @@ use coral_redis::{EventPublisher, RedisPool};
 use database::{Database, Member};
 
 use crate::{api::CoralApiClient, commands};
-use crate::commands::blacklist::tag::PendingOverwrite;
+use crate::commands::blacklist::tag::{PendingOverwrite, PendingTagChanges};
 use crate::commands::stats::bedwars::BedwarsCache;
 use crate::commands::stats::session::SessionCache;
 
@@ -45,7 +45,9 @@ pub struct Data {
     pub event_publisher: EventPublisher,
     pub bedwars_images: Arc<Mutex<HashMap<String, BedwarsCache>>>,
     pub session_images: Arc<Mutex<HashMap<String, SessionCache>>>,
+    pub home_guild_id: Option<GuildId>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
+    pub pending_tag_changes: Arc<Mutex<HashMap<String, PendingTagChanges>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub sync_progress: Arc<Mutex<HashMap<GuildId, Arc<crate::sync::SyncProgress>>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
@@ -183,6 +185,13 @@ impl Handler {
             _ if id.starts_with("tag_edit:") => commands::blacklist::tag::handle_edit(ctx, component, &self.data).await,
             _ if id.starts_with("tag_edit_type:") => commands::blacklist::tag::handle_edit_type(ctx, component, &self.data).await,
             _ if id.starts_with("tag_edit_reason:") => commands::blacklist::tag::handle_edit_reason(ctx, component, &self.data).await,
+            _ if id.starts_with("tc_type:") => commands::blacklist::tag::handle_tc_type(ctx, component, &self.data).await,
+            _ if id.starts_with("tc_reason:") => commands::blacklist::tag::handle_tc_reason(ctx, component, &self.data).await,
+            _ if id.starts_with("tc_hide:") => commands::blacklist::tag::handle_tc_hide(ctx, component, &self.data).await,
+            _ if id.starts_with("tc_claim:") => commands::blacklist::tag::handle_tc_claim(ctx, component, &self.data).await,
+            _ if id.starts_with("tc_remove:") => commands::blacklist::tag::handle_tc_remove(ctx, component, &self.data).await,
+            _ if id.starts_with("tc_save:") => commands::blacklist::tag::handle_tc_save(ctx, component, &self.data, false).await,
+            _ if id.starts_with("tc_silent:") => commands::blacklist::tag::handle_tc_save(ctx, component, &self.data, true).await,
             _ if id.starts_with("evidence_add_media") => commands::blacklist::evidence::handle_add_media(ctx, component, &self.data).await,
             _ if id.starts_with("evidence_remove") => commands::blacklist::evidence::handle_remove(ctx, component, &self.data).await,
             _ if id.starts_with("evidence_archive") => commands::blacklist::evidence::handle_archive(ctx, component, &self.data).await,
@@ -255,6 +264,7 @@ impl Handler {
             _ if strip_panel_prefix(id).is_some_and(|a| a.starts_with("add_account_modal:")) => commands::admin::accounts_panel::handle_add_account_modal(ctx, modal, &self.data).await,
             _ if strip_panel_prefix(id).is_some_and(|a| a.starts_with("add_code_modal:")) => commands::admin::accounts_panel::handle_add_code_modal(ctx, modal, &self.data).await,
             _ if id.starts_with("tag_edit_reason_modal:") => commands::blacklist::tag::handle_edit_reason_modal(ctx, modal, &self.data).await,
+            _ if id.starts_with("tc_reason_modal:") => commands::blacklist::tag::handle_tc_reason_modal(ctx, modal, &self.data).await,
             _ => Ok(()),
         }
     }
