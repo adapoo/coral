@@ -5,16 +5,19 @@ use axum::extract::{Path, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde_json::Value;
 
 use clients::{is_uuid, normalize_uuid};
-use database::{BlacklistRepository, CacheRepository};
+use database::{BlacklistRepository, CacheRepository, permissions};
 
-use crate::cache::SNAPSHOT_SOURCE;
-use crate::error::{ApiError, ErrorResponse};
-use crate::responses::{PlayerStatsResponse, PlayerTagsResponse, TagResponse};
-use crate::state::AppState;
+use crate::{
+    auth::DeveloperKeyAuth,
+    cache::SNAPSHOT_SOURCE,
+    error::{ApiError, ErrorResponse},
+    responses::{PlayerStatsResponse, PlayerTagsResponse, TagResponse},
+    state::AppState,
+};
 
 
 pub fn public_router() -> Router<AppState> {
@@ -101,15 +104,16 @@ pub async fn player_tags(
         (status = 429, description = "Rate limited", body = ErrorResponse),
         (status = 502, description = "External API error", body = ErrorResponse),
     ),
-    tag = "Player",
+    tag = "Internal",
     security(("api_key" = []))
 )]
 pub async fn player_stats(
     State(state): State<AppState>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Path(identifier): Path<String>,
 ) -> Result<Json<PlayerStatsResponse>, ApiError> {
+    if let Some(Extension(ref dev)) = dev_auth { dev.require(permissions::PLAYER_DATA)?; }
     let (uuid, username_hint) = resolve_identifier(&state, &identifier).await?;
-
     let repo = BlacklistRepository::new(state.db.pool());
     let (player_data, tags, profile) = tokio::join!(
         state.hypixel.get_player(&uuid),
@@ -147,13 +151,15 @@ pub async fn player_stats(
         (status = 404, description = "Skin not found", body = ErrorResponse),
         (status = 500, description = "Skin rendering unavailable", body = ErrorResponse),
     ),
-    tag = "Player",
+    tag = "Internal",
     security(("api_key" = []))
 )]
 pub async fn player_skin(
     State(state): State<AppState>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Path(identifier): Path<String>,
 ) -> Result<Response, ApiError> {
+    if let Some(Extension(ref dev)) = dev_auth { dev.require(permissions::PLAYER_DATA)?; }
     let provider = state.skin_provider.as_ref()
         .ok_or_else(|| ApiError::Internal("skin rendering unavailable".into()))?;
     let (uuid, _) = resolve_identifier(&state, &identifier).await?;

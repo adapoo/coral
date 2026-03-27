@@ -29,6 +29,17 @@ pub struct MemberRepository<'a> {
 impl<'a> MemberRepository<'a> {
     pub fn new(pool: &'a PgPool) -> Self { Self { pool } }
 
+    pub async fn get_by_id(&self, id: i64) -> Result<Option<Member>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT id, discord_id, uuid, api_key, join_date, request_count,
+                    access_level, key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, config
+             FROM members WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await
+    }
+
     pub async fn get_by_discord_id(&self, discord_id: i64) -> Result<Option<Member>, sqlx::Error> {
         sqlx::query_as(
             "SELECT id, discord_id, uuid, api_key, join_date, request_count,

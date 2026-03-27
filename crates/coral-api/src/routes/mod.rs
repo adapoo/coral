@@ -1,8 +1,10 @@
 use axum::middleware;
 use axum::Router;
 
-use crate::auth::{allow_internal_or_auth, require_internal_or_admin, require_moderator};
-use crate::state::AppState;
+use crate::{
+    auth::{allow_internal_or_auth, require_internal_or_admin, require_moderator},
+    state::AppState,
+};
 
 pub mod batch;
 pub mod cubelify;

@@ -1,13 +1,13 @@
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use clients::{is_uuid, normalize_uuid};
+use database::permissions;
 
-use crate::error::ApiError;
-use crate::state::AppState;
+use crate::{auth::DeveloperKeyAuth, error::ApiError, state::AppState};
 
 const MAX_USERNAME_LENGTH: usize = 16;
 const EXP_PER_LEVEL_AFTER_15: u64 = 3_000_000;
@@ -69,14 +69,16 @@ pub fn router() -> Router<AppState> {
         (status = 429, description = "Rate limited", body = crate::error::ErrorResponse),
         (status = 502, description = "External API error", body = crate::error::ErrorResponse),
     ),
-    tag = "Guild",
+    tag = "Internal",
     security(("api_key" = []))
 )]
 pub async fn get_guild(
     State(state): State<AppState>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Path(identifier): Path<String>,
     Query(query): Query<GuildQuery>,
 ) -> Result<Json<Option<GuildResponse>>, ApiError> {
+    if let Some(Extension(ref dev)) = dev_auth { dev.require(permissions::GUILD)?; }
     let (guild, player_uuid) = match query.by.as_deref() {
         Some("name") => fetch_by_name(&state, &identifier).await?,
         Some("player") => fetch_by_player(&state, &identifier).await?,
@@ -132,7 +134,6 @@ async fn resolve_uuid(state: &AppState, identifier: &str) -> Result<String, ApiE
 fn build_response(guild: &serde_json::Value, player_uuid: Option<&str>) -> GuildResponse {
     let members = guild["members"].as_array();
     let exp = guild["exp"].as_u64().unwrap_or(0);
-
     GuildResponse {
         id: guild["_id"].as_str().unwrap_or_default().to_string(),
         name: guild["name"].as_str().unwrap_or_default().to_string(),
@@ -148,17 +149,11 @@ fn build_response(guild: &serde_json::Value, player_uuid: Option<&str>) -> Guild
 
 
 fn find_member(members: Option<&Vec<serde_json::Value>>, target: &str) -> Option<GuildMemberInfo> {
-    members?.iter().find(|m| {
-        m["uuid"].as_str().is_some_and(|u| normalize_uuid(u) == target)
-    }).map(|m| {
-        let weekly_gexp = m["expHistory"].as_object()
-            .map(|exp| exp.values().filter_map(|v| v.as_u64()).sum());
-        GuildMemberInfo {
-            uuid: target.to_string(),
-            rank: m["rank"].as_str().map(String::from),
-            joined: parse_timestamp(m["joined"].as_i64()),
-            weekly_gexp,
-        }
+    members?.iter().find(|m| m["uuid"].as_str().is_some_and(|u| normalize_uuid(u) == target)).map(|m| GuildMemberInfo {
+        uuid: target.to_string(),
+        rank: m["rank"].as_str().map(String::from),
+        joined: parse_timestamp(m["joined"].as_i64()),
+        weekly_gexp: m["expHistory"].as_object().map(|exp| exp.values().filter_map(|v| v.as_u64()).sum()),
     })
 }
 
@@ -173,7 +168,6 @@ fn calculate_level(exp: u64) -> u32 {
         100_000, 150_000, 250_000, 500_000, 750_000, 1_000_000, 1_250_000, 1_500_000, 2_000_000,
         2_500_000, 2_500_000, 2_500_000, 2_500_000, 2_500_000, 3_000_000,
     ];
-
     let mut level = 0u32;
     let mut remaining = exp;
     for threshold in THRESHOLDS {

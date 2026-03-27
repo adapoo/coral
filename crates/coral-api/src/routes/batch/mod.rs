@@ -9,9 +9,7 @@ use utoipa::ToSchema;
 use clients::{is_uuid, normalize_uuid};
 use database::BlacklistRepository;
 
-use crate::error::ApiError;
-use crate::responses::TagResponse;
-use crate::state::AppState;
+use crate::{error::ApiError, responses::TagResponse, state::AppState};
 
 const MAX_BATCH_SIZE: usize = 100;
 
@@ -41,7 +39,7 @@ pub fn router() -> Router<AppState> {
         (status = 400, description = "Invalid request", body = crate::error::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
     ),
-    tag = "Batch",
+    tag = "Player",
 )]
 pub async fn batch_lookup(
     State(state): State<AppState>,

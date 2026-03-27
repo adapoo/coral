@@ -8,9 +8,7 @@ use clients::normalize_uuid;
 use coral_redis::BlacklistEvent;
 use database::{AccessRank, BlacklistRepository};
 
-use crate::auth::AuthenticatedMember;
-use crate::error::ApiError;
-use crate::state::AppState;
+use crate::{auth::AuthenticatedMember, error::ApiError, state::AppState};
 
 const MAX_REASON_LENGTH: usize = 500;
 const MAX_IDENTIFIER_LENGTH: usize = 36;
@@ -104,7 +102,7 @@ fn validate_reason(reason: &str) -> Result<(), ApiError> {
         (status = 403, description = "Forbidden", body = crate::error::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
     ),
-    tag = "Tags",
+    tag = "Blacklist",
     security(("api_key" = []))
 )]
 pub async fn add_tag(
@@ -159,7 +157,7 @@ pub async fn add_tag(
         (status = 404, description = "Tag not found", body = crate::error::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
     ),
-    tag = "Tags",
+    tag = "Blacklist",
     security(("api_key" = []))
 )]
 pub async fn remove_tag(
@@ -210,7 +208,7 @@ pub async fn remove_tag(
         (status = 409, description = "Conflict - tag modified", body = crate::error::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
     ),
-    tag = "Tags",
+    tag = "Blacklist",
     security(("api_key" = []))
 )]
 pub async fn overwrite_tag(
@@ -274,7 +272,7 @@ pub async fn overwrite_tag(
         (status = 403, description = "Forbidden - moderator access required", body = crate::error::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
     ),
-    tag = "Tags",
+    tag = "Blacklist",
     security(("api_key" = []))
 )]
 pub async fn lock_player(
@@ -316,7 +314,7 @@ pub async fn lock_player(
         (status = 403, description = "Forbidden - moderator access required", body = crate::error::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
     ),
-    tag = "Tags",
+    tag = "Blacklist",
     security(("api_key" = []))
 )]
 pub async fn unlock_player(

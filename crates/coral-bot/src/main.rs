@@ -54,6 +54,9 @@ async fn init_data() -> Result<Data> {
     let api_key = env::var("INTERNAL_API_KEY").expect("INTERNAL_API_KEY required");
 
     let db = Database::connect(&database_url).await?;
+    if let Err(e) = db.migrate().await {
+        tracing::warn!("Migration skipped: {e}");
+    }
     let redis = RedisPool::connect(&redis_url).await?;
     let event_publisher = EventPublisher::new(redis.clone());
     let api = CoralApiClient::new(api_url, api_key);

@@ -50,7 +50,6 @@ async fn init_state() -> Result<AppState> {
     if let Err(e) = db.migrate().await {
         tracing::warn!("Migration skipped: {e}");
     }
-
     let redis = RedisPool::connect(&env::var("REDIS_URL").expect("REDIS_URL required")).await?;
     let hypixel = HypixelClient::new(parse_hypixel_keys())?;
     let mojang = MojangClient::new();
@@ -64,7 +63,6 @@ async fn init_state() -> Result<AppState> {
             None
         }
     };
-
     Ok(AppState::new(
         db,
         hypixel,
@@ -102,7 +100,7 @@ fn build_router(state: AppState) -> Router {
         (status = 200, description = "Service is healthy", body = serde_json::Value),
         (status = 503, description = "Service is degraded", body = serde_json::Value),
     ),
-    tag = "Health",
+    tag = "Internal",
 )]
 pub async fn health_check(State(state): State<AppState>) -> Response {
     let db_ok = sqlx::query("SELECT 1").execute(state.db.pool()).await.is_ok();
@@ -110,7 +108,6 @@ pub async fn health_check(State(state): State<AppState>) -> Response {
         .query_async::<String>(&mut state.redis.connection())
         .await
         .is_ok();
-
     let status = if db_ok && redis_ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
     let body = serde_json::json!({
         "status": if db_ok && redis_ok { "healthy" } else { "degraded" },

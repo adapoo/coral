@@ -9,10 +9,14 @@ use clients::SkinProvider;
 use coral_redis::{EventPublisher, RedisPool};
 use database::{Database, Member};
 
-use crate::{api::CoralApiClient, commands};
-use crate::commands::blacklist::tag::{PendingOverwrite, PendingTagChanges};
-use crate::commands::stats::bedwars::BedwarsCache;
-use crate::commands::stats::session::SessionCache;
+use crate::{
+    api::CoralApiClient,
+    commands::{
+        self,
+        blacklist::tag::{PendingOverwrite, PendingTagChanges},
+        stats::{bedwars::BedwarsCache, session::SessionCache},
+    },
+};
 
 pub use database::AccessRank;
 
@@ -85,6 +89,7 @@ impl Handler {
             commands::user::link::register(),
             commands::user::unlink::register(),
             commands::user::dashboard::register(),
+            commands::user::help::register(),
             commands::admin::info::register(),
             commands::admin::ban::register(),
             commands::admin::manage::register(),
@@ -113,6 +118,7 @@ impl Handler {
             "link" => commands::user::link::run(ctx, command, &self.data).await,
             "unlink" => commands::user::unlink::run(ctx, command, &self.data).await,
             "dashboard" => commands::user::dashboard::run(ctx, command, &self.data).await,
+            "help" => commands::user::help::run(ctx, command, &self.data).await,
             "info" => commands::admin::info::run(ctx, command, &self.data).await,
             "ban" => commands::admin::ban::run(ctx, command, &self.data).await,
             "manage" => commands::admin::manage::run(ctx, command, &self.data).await,
@@ -172,6 +178,10 @@ impl Handler {
         match id {
             "regenerate_key" => commands::user::dashboard::handle_regenerate_key(ctx, component, &self.data).await,
             "confirm_regenerate_key" => commands::user::dashboard::handle_confirm_regenerate_key(ctx, component, &self.data).await,
+            "regenerate_dev_key" => commands::user::dashboard::handle_regenerate_dev_key(ctx, component, &self.data).await,
+            "confirm_regenerate_dev_key" => commands::user::dashboard::handle_confirm_regenerate_dev_key(ctx, component, &self.data).await,
+            "help_button" => commands::user::help::handle_help_button(ctx, component, &self.data).await,
+            "help_back" => commands::user::help::handle_help_back(ctx, component, &self.data).await,
             "setup_link" => commands::admin::setup::handle_link_button(ctx, component, &self.data).await,
             _ if id.starts_with("dashboard_accounts_back:") => commands::admin::accounts_panel::handle_dashboard_accounts_back(ctx, component, &self.data).await,
             _ if id.starts_with("dashboard_accounts:") => commands::admin::accounts_panel::handle_dashboard_accounts_button(ctx, component, &self.data).await,
@@ -204,6 +214,11 @@ impl Handler {
             _ if id.starts_with("manage_toggle_tagging:") => commands::admin::manage::handle_toggle_tagging(ctx, component, &self.data).await,
             _ if id.starts_with("manage_remove_strike:") => commands::admin::manage::handle_remove_strike(ctx, component, &self.data).await,
             _ if id.starts_with("manage_register:") => commands::admin::manage::handle_register_button(ctx, component, &self.data).await,
+            _ if id.starts_with("manage_create_dev:") => commands::admin::manage::handle_create_dev_key(ctx, component, &self.data).await,
+            _ if id.starts_with("manage_lock_dev:") => commands::admin::manage::handle_lock_dev_key(ctx, component, &self.data).await,
+            _ if id.starts_with("manage_unlock_dev:") => commands::admin::manage::handle_unlock_dev_key(ctx, component, &self.data).await,
+            _ if id.starts_with("manage_delete_dev:") => commands::admin::manage::handle_delete_dev_key(ctx, component, &self.data).await,
+            _ if id.starts_with("manage_dev_perms:") => commands::admin::manage::handle_dev_perms_select(ctx, component, &self.data).await,
             _ if id.starts_with("review_add_replay:") => commands::blacklist::reviews::handle_add_replay(ctx, component, &self.data).await,
             _ if id.starts_with("review_attach_media:") => commands::blacklist::reviews::handle_attach_media(ctx, component, &self.data).await,
             _ if id.starts_with("review_edit_tag:") => commands::blacklist::reviews::handle_edit_tag(ctx, component, &self.data).await,

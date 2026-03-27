@@ -8,11 +8,13 @@ use utoipa::{IntoParams, ToSchema};
 
 use database::*;
 
-use crate::auth::AuthenticatedMember;
-use crate::error::ApiError;
-use crate::responses::SuccessResponse;
-use crate::routes::player;
-use crate::state::AppState;
+use crate::{
+    auth::{AuthenticatedMember, DeveloperKeyAuth},
+    error::ApiError,
+    responses::SuccessResponse,
+    routes::player,
+    state::AppState,
+};
 
 
 pub fn router() -> Router<AppState> {
@@ -104,7 +106,8 @@ macro_rules! period_handler {
         #[utoipa::path(
             get, path = $path, params(PlayerQuery),
             responses((status = 200, body = SessionDeltaResponse), (status = 404, body = crate::error::ErrorResponse)),
-            tag = "Sessions", security(("api_key" = []))
+            tag = "Player",
+            security(("api_key" = []))
         )]
         pub async fn $name(
             State(state): State<AppState>,
@@ -131,14 +134,16 @@ period_handler!(session_yearly,  Yearly,  "/v3/player/sessions/yearly");
         (status = 403, body = crate::error::ErrorResponse),
         (status = 404, body = crate::error::ErrorResponse),
     ),
-    tag = "Sessions",
+    tag = "Player",
     security(("api_key" = []))
 )]
 pub async fn session_custom(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Query(query): Query<CustomSessionQuery>,
 ) -> Result<Json<SessionDeltaResponse>, ApiError> {
+    let dev = dev_auth.as_ref().map(|Extension(d)| d);
     let now = Utc::now();
     let (uuid, _) = player::resolve_identifier(&state, &query.player).await?;
 
@@ -155,7 +160,7 @@ pub async fn session_custom(
         }
 
         (None, None, Some(name)) => {
-            require_owner(&state, &uuid, member.0.discord_id).await?;
+            require_owner(&state, &uuid, member.0.discord_id, dev).await?;
             SessionRepository::new(state.db.pool())
                 .get(&uuid, member.0.discord_id, name)
                 .await?
@@ -201,7 +206,6 @@ fn parse_duration(s: &str) -> Option<Duration> {
     let (digits, unit) = s.split_at(s.len().checked_sub(1)?);
     let n: i64 = digits.parse().ok()?;
     if n <= 0 { return None; }
-
     match unit {
         "h" => Some(Duration::hours(n)),
         "d" => Some(Duration::days(n)),
@@ -219,16 +223,17 @@ fn parse_duration(s: &str) -> Option<Duration> {
         (status = 200, body = MarkerListResponse),
         (status = 403, body = crate::error::ErrorResponse),
     ),
-    tag = "Sessions",
+    tag = "Player",
     security(("api_key" = []))
 )]
 pub async fn list_markers(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Query(query): Query<PlayerQuery>,
 ) -> Result<Json<MarkerListResponse>, ApiError> {
     let (uuid, _) = player::resolve_identifier(&state, &query.player).await?;
-    require_owner(&state, &uuid, member.0.discord_id).await?;
+    require_owner(&state, &uuid, member.0.discord_id, dev_auth.as_ref().map(|Extension(d)| d)).await?;
 
     let markers = SessionRepository::new(state.db.pool())
         .list(&uuid, member.0.discord_id)
@@ -250,17 +255,18 @@ pub async fn list_markers(
         (status = 200, body = MarkerResponse),
         (status = 403, body = crate::error::ErrorResponse),
     ),
-    tag = "Sessions",
+    tag = "Player",
     security(("api_key" = []))
 )]
 pub async fn create_marker(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Query(query): Query<PlayerQuery>,
     Json(body): Json<CreateMarkerRequest>,
 ) -> Result<Json<MarkerResponse>, ApiError> {
     let (uuid, _) = player::resolve_identifier(&state, &query.player).await?;
-    require_owner(&state, &uuid, member.0.discord_id).await?;
+    require_owner(&state, &uuid, member.0.discord_id, dev_auth.as_ref().map(|Extension(d)| d)).await?;
 
     let name = body.name.unwrap_or_else(|| Utc::now().format("%b %d, %Y").to_string());
     validate_marker_name(&name)?;
@@ -283,18 +289,19 @@ pub async fn create_marker(
         (status = 403, body = crate::error::ErrorResponse),
         (status = 404, body = crate::error::ErrorResponse),
     ),
-    tag = "Sessions",
+    tag = "Player",
     security(("api_key" = []))
 )]
 pub async fn rename_marker(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Path(name): Path<String>,
     Query(query): Query<PlayerQuery>,
     Json(body): Json<RenameMarkerRequest>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let (uuid, _) = player::resolve_identifier(&state, &query.player).await?;
-    require_owner(&state, &uuid, member.0.discord_id).await?;
+    require_owner(&state, &uuid, member.0.discord_id, dev_auth.as_ref().map(|Extension(d)| d)).await?;
     validate_marker_name(&body.new_name)?;
 
     let ok = SessionRepository::new(state.db.pool())
@@ -315,17 +322,18 @@ pub async fn rename_marker(
         (status = 403, body = crate::error::ErrorResponse),
         (status = 404, body = crate::error::ErrorResponse),
     ),
-    tag = "Sessions",
+    tag = "Player",
     security(("api_key" = []))
 )]
 pub async fn delete_marker(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Path(name): Path<String>,
     Query(query): Query<PlayerQuery>,
 ) -> Result<Json<SuccessResponse>, ApiError> {
     let (uuid, _) = player::resolve_identifier(&state, &query.player).await?;
-    require_owner(&state, &uuid, member.0.discord_id).await?;
+    require_owner(&state, &uuid, member.0.discord_id, dev_auth.as_ref().map(|Extension(d)| d)).await?;
 
     let ok = SessionRepository::new(state.db.pool())
         .delete(&uuid, member.0.discord_id, &name)
@@ -336,7 +344,6 @@ pub async fn delete_marker(
 }
 
 
-
 #[utoipa::path(
     get,
     path = "/v3/player/sessions/snapshots",
@@ -345,17 +352,17 @@ pub async fn delete_marker(
         (status = 200, body = SnapshotListResponse),
         (status = 403, body = crate::error::ErrorResponse),
     ),
-    tag = "Sessions",
+    tag = "Player",
     security(("api_key" = []))
 )]
 pub async fn list_snapshots(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Query(query): Query<SnapshotQuery>,
 ) -> Result<Json<SnapshotListResponse>, ApiError> {
     let (uuid, _) = player::resolve_identifier(&state, &query.player).await?;
-    require_owner(&state, &uuid, member.0.discord_id).await?;
-
+    require_owner(&state, &uuid, member.0.discord_id, dev_auth.as_ref().map(|Extension(d)| d)).await?;
     let limit = query.limit.unwrap_or(100).min(500);
     let before = match query.before {
         Some(ref s) => DateTime::parse_from_rfc3339(s)
@@ -378,12 +385,11 @@ pub async fn list_snapshots(
 }
 
 
-async fn require_owner(state: &AppState, uuid: &str, discord_id: i64) -> Result<(), ApiError> {
-    let owned = AccountRepository::new(state.db.pool())
-        .is_owned_by(uuid, discord_id)
-        .await?;
-
-    if !owned {
+async fn require_owner(
+    state: &AppState, uuid: &str, discord_id: i64, dev_auth: Option<&DeveloperKeyAuth>,
+) -> Result<(), ApiError> {
+    if dev_auth.is_some_and(|d| d.has(permissions::ALL_SESSIONS)) { return Ok(()); }
+    if !AccountRepository::new(state.db.pool()).is_owned_by(uuid, discord_id).await? {
         return Err(ApiError::Forbidden("you do not own this account".into()));
     }
     Ok(())
@@ -399,10 +405,5 @@ fn validate_marker_name(name: &str) -> Result<(), ApiError> {
 
 
 fn to_marker_response(m: &SessionMarker) -> MarkerResponse {
-    MarkerResponse {
-        id: m.id,
-        name: m.name.clone(),
-        snapshot_timestamp: m.snapshot_timestamp.to_rfc3339(),
-        created_at: m.created_at.to_rfc3339(),
-    }
+    MarkerResponse { id: m.id, name: m.name.clone(), snapshot_timestamp: m.snapshot_timestamp.to_rfc3339(), created_at: m.created_at.to_rfc3339() }
 }

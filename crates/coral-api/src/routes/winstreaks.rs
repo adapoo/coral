@@ -8,9 +8,7 @@ use database::CacheRepository;
 use hypixel::parsing::winstreaks;
 use hypixel::{Mode, extract_winstreak_snapshot};
 
-use crate::error::ApiError;
-use crate::routes::{player, session};
-use crate::state::AppState;
+use crate::{error::ApiError, routes::{player, session}, state::AppState};
 
 
 const MODES: [Mode; 7] = [
@@ -54,7 +52,7 @@ pub struct StreakEntry {
         (status = 200, body = WinstreakResponse),
         (status = 404, body = crate::error::ErrorResponse),
     ),
-    tag = "Winstreaks",
+    tag = "Player",
     security(("api_key" = []))
 )]
 pub async fn player_winstreaks(
