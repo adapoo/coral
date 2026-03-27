@@ -80,11 +80,15 @@ pub fn register() -> CreateCommand<'static> {
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     let Some(guild_id) = command.guild_id else {
-        return interact::send_error(
-            ctx, command, "Error", "This command can only be used in a server.",
-        )
-        .await;
+        return interact::send_error(ctx, command, "Error", "This command can only be used in a server.").await;
     };
+
+    let has_perms = command.member.as_ref()
+        .and_then(|m| m.permissions)
+        .is_some_and(|p| p.manage_guild());
+    if !has_perms {
+        return interact::send_error(ctx, command, "Error", "You need Manage Server permission to use this command.").await;
+    }
 
     let repo = GuildConfigRepository::new(data.db.pool());
     let config = repo.upsert(guild_id.get() as i64, command.user.id.get() as i64).await?;

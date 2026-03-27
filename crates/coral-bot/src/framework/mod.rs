@@ -81,7 +81,7 @@ impl Handler {
     pub fn new(data: Data) -> Self { Self { data } }
 
     fn commands() -> Vec<CreateCommand<'static>> {
-        vec![
+        let mut cmds: Vec<CreateCommand<'static>> = vec![
             commands::blacklist::tag::register(),
             commands::stats::bedwars::register(),
             commands::stats::prestiges::register(),
@@ -93,7 +93,6 @@ impl Handler {
             commands::admin::info::register(),
             commands::admin::ban::register(),
             commands::admin::manage::register(),
-            commands::admin::setup::register(),
             commands::admin::strike::register(),
             commands::blacklist::evidence::register(),
         ]
@@ -106,7 +105,15 @@ impl Handler {
                     InteractionContext::PrivateChannel,
                 ])
         })
-        .collect()
+        .collect();
+
+        cmds.push(
+            commands::admin::setup::register()
+                .integration_types(vec![InstallationContext::Guild])
+                .contexts(vec![InteractionContext::Guild]),
+        );
+
+        cmds
     }
 
     async fn handle_command(&self, ctx: &Context, command: &CommandInteraction) -> anyhow::Result<()> {
