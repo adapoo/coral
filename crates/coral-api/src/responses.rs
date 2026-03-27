@@ -28,7 +28,8 @@ pub struct TagResponse {
     pub tag_type: String,
     pub reason: String,
     pub added_by: i64,
-    pub added_on: String,
+    pub added_on: i64,
+    pub added_on_readable: String,
     pub hide_username: bool,
 }
 
@@ -85,7 +86,8 @@ impl TagResponse {
             tag_type: tag.tag_type.clone(),
             reason: tag.reason.clone(),
             added_by: tag.added_by,
-            added_on: tag.added_on.to_rfc3339(),
+            added_on: tag.added_on.timestamp_millis(),
+            added_on_readable: tag.added_on.format("%b %d, %Y %H:%M UTC").to_string(),
             hide_username: tag.hide_username,
         }
     }

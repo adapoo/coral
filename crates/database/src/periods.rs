@@ -47,15 +47,6 @@ impl Period {
         }
     }
 
-    pub fn staleness(&self) -> Duration {
-        match self {
-            Self::Daily => Duration::hours(1),
-            Self::Weekly => Duration::hours(12),
-            Self::Monthly => Duration::days(1),
-            Self::Yearly => Duration::days(7),
-        }
-    }
-
     pub fn fixed_preset(&self) -> Option<(&'static str, &'static str)> {
         match self {
             Self::Daily => Some(("past_24h", "Past 24 Hours")),

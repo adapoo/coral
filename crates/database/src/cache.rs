@@ -77,9 +77,22 @@ impl<'a> CacheRepository<'a> {
         .fetch_optional(self.pool)
         .await?;
 
-        let Some(baseline) = baseline else { return Ok(None) };
-        let deltas = self.get_deltas_in_range(uuid, &baseline, timestamp).await?;
-        Ok(Some(reconstruct(&baseline.data, &deltas)))
+        if let Some(baseline) = baseline {
+            let deltas = self.get_deltas_in_range(uuid, &baseline, timestamp).await?;
+            return Ok(Some(reconstruct(&baseline.data, &deltas)));
+        }
+
+        let first: Option<SnapshotRow> = sqlx::query_as(
+            "SELECT id, is_baseline, data, timestamp FROM player_snapshots
+             WHERE uuid = $1 AND is_baseline = true AND timestamp > $2
+             ORDER BY timestamp ASC LIMIT 1",
+        )
+        .bind(uuid)
+        .bind(timestamp)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(first.map(|b| b.data))
     }
 
     pub async fn get_latest_snapshot(&self, uuid: &str) -> Result<Option<Value>, sqlx::Error> {
@@ -89,19 +102,22 @@ impl<'a> CacheRepository<'a> {
     pub async fn list_snapshot_timestamps(
         &self,
         uuid: &str,
-        before: DateTime<Utc>,
-        limit: i64,
-    ) -> Result<Vec<(DateTime<Utc>, bool)>, sqlx::Error> {
-        sqlx::query_as::<_, (DateTime<Utc>, bool)>(
-            "SELECT timestamp, is_baseline FROM player_snapshots
-             WHERE uuid = $1 AND timestamp < $2
-             ORDER BY timestamp DESC LIMIT $3",
+        before: Option<DateTime<Utc>>,
+        after: Option<DateTime<Utc>>,
+    ) -> Result<Vec<DateTime<Utc>>, sqlx::Error> {
+        sqlx::query_as::<_, (DateTime<Utc>,)>(
+            "SELECT timestamp FROM player_snapshots
+             WHERE uuid = $1
+               AND ($2::timestamptz IS NULL OR timestamp < $2)
+               AND ($3::timestamptz IS NULL OR timestamp > $3)
+             ORDER BY timestamp ASC",
         )
         .bind(uuid)
         .bind(before)
-        .bind(limit)
+        .bind(after)
         .fetch_all(self.pool)
         .await
+        .map(|rows| rows.into_iter().map(|r| r.0).collect())
     }
 
     pub async fn get_latest_timestamp(&self, uuid: &str) -> Result<Option<DateTime<Utc>>, sqlx::Error> {

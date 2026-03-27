@@ -52,7 +52,7 @@ pub struct GuildResponse {
     pub level: u32,
     pub members: usize,
     pub experience: u64,
-    pub created: Option<String>,
+    pub created: Option<i64>,
     pub player: Option<GuildMemberInfo>,
 }
 
@@ -60,7 +60,7 @@ pub struct GuildResponse {
 #[derive(Deserialize)]
 pub struct GuildMemberInfo {
     pub rank: Option<String>,
-    pub joined: Option<String>,
+    pub joined: Option<i64>,
     pub weekly_gexp: Option<u64>,
 }
 

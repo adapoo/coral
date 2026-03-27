@@ -50,9 +50,11 @@ pub struct CustomSessionQuery {
 pub struct SnapshotQuery {
     pub player: String,
     #[serde(default)]
-    pub limit: Option<i64>,
-    #[serde(default)]
     pub before: Option<String>,
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub at: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -69,7 +71,8 @@ pub struct RenameMarkerRequest {
 #[derive(Serialize, ToSchema)]
 pub struct SessionDeltaResponse {
     pub uuid: String,
-    pub from: String,
+    pub from: i64,
+    pub from_readable: String,
     #[schema(value_type = Value)]
     pub delta: Value,
 }
@@ -78,8 +81,10 @@ pub struct SessionDeltaResponse {
 pub struct MarkerResponse {
     pub id: i64,
     pub name: String,
-    pub snapshot_timestamp: String,
-    pub created_at: String,
+    pub snapshot_timestamp: i64,
+    pub snapshot_readable: String,
+    pub created_at: i64,
+    pub created_readable: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -91,13 +96,15 @@ pub struct MarkerListResponse {
 #[derive(Serialize, ToSchema)]
 pub struct SnapshotListResponse {
     pub uuid: String,
-    pub snapshots: Vec<SnapshotEntry>,
+    pub snapshots: Vec<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
-pub struct SnapshotEntry {
-    pub timestamp: String,
-    pub is_baseline: bool,
+pub struct SnapshotDataResponse {
+    pub uuid: String,
+    pub timestamp: i64,
+    #[schema(value_type = Value)]
+    pub data: Value,
 }
 
 
@@ -153,11 +160,7 @@ pub async fn session_custom(
                 .ok_or_else(|| ApiError::BadRequest("'duration' must be like 48h, 10d, or 2w".into()))?
         }
 
-        (None, Some(ts), None) => {
-            DateTime::parse_from_rfc3339(ts)
-                .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|_| ApiError::BadRequest("'from' must be an RFC 3339 timestamp".into()))?
-        }
+        (None, Some(ts), None) => parse_timestamp(ts)?,
 
         (None, None, Some(name)) => {
             require_owner(&state, &uuid, member.0.discord_id, dev).await?;
@@ -196,7 +199,8 @@ async fn delta_response(
 
     Ok(Json(SessionDeltaResponse {
         uuid,
-        from: from.to_rfc3339(),
+        from: from.timestamp_millis(),
+        from_readable: from.format("%b %d, %Y %H:%M UTC").to_string(),
         delta,
     }))
 }
@@ -351,6 +355,7 @@ pub async fn delete_marker(
     responses(
         (status = 200, body = SnapshotListResponse),
         (status = 403, body = crate::error::ErrorResponse),
+        (status = 404, body = crate::error::ErrorResponse),
     ),
     tag = "Player",
     security(("api_key" = []))
@@ -360,28 +365,34 @@ pub async fn list_snapshots(
     Extension(member): Extension<AuthenticatedMember>,
     dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Query(query): Query<SnapshotQuery>,
-) -> Result<Json<SnapshotListResponse>, ApiError> {
+) -> Result<Json<Value>, ApiError> {
     let (uuid, _) = player::resolve_identifier(&state, &query.player).await?;
     require_owner(&state, &uuid, member.0.discord_id, dev_auth.as_ref().map(|Extension(d)| d)).await?;
-    let limit = query.limit.unwrap_or(100).min(500);
-    let before = match query.before {
-        Some(ref s) => DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|_| ApiError::BadRequest("'before' must be RFC 3339".into()))?,
-        None => Utc::now(),
-    };
+    let cache = CacheRepository::new(state.db.pool());
 
-    let rows = CacheRepository::new(state.db.pool())
-        .list_snapshot_timestamps(&uuid, before, limit)
-        .await?;
+    if let Some(ref at) = query.at {
+        let ts = parse_timestamp(at)?;
+        let data = cache.get_snapshot_at(&uuid, ts).await?
+            .ok_or_else(|| ApiError::NotFound("no snapshot data for this player".into()))?;
+        return Ok(Json(serde_json::json!({
+            "uuid": uuid,
+            "timestamp": ts.timestamp_millis(),
+            "readable": ts.format("%b %d, %Y %H:%M UTC").to_string(),
+            "data": data,
+        })));
+    }
 
-    Ok(Json(SnapshotListResponse {
-        uuid,
-        snapshots: rows.into_iter().map(|(ts, baseline)| SnapshotEntry {
-            timestamp: ts.to_rfc3339(),
-            is_baseline: baseline,
-        }).collect(),
-    }))
+    let before = query.before.as_ref().map(|s| parse_timestamp(s)).transpose()?;
+    let after = query.after.as_ref().map(|s| parse_timestamp(s)).transpose()?;
+
+    let rows = cache.list_snapshot_timestamps(&uuid, before, after).await?;
+
+    let snapshots: Vec<Value> = rows.into_iter().map(|ts| serde_json::json!({
+        "timestamp": ts.timestamp_millis(),
+        "readable": ts.format("%b %d, %Y %H:%M UTC").to_string(),
+    })).collect();
+
+    Ok(Json(serde_json::json!({ "uuid": uuid, "snapshots": snapshots })))
 }
 
 
@@ -396,6 +407,17 @@ async fn require_owner(
 }
 
 
+fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, ApiError> {
+    if let Ok(millis) = s.parse::<i64>() {
+        return DateTime::from_timestamp_millis(millis)
+            .ok_or_else(|| ApiError::BadRequest("invalid timestamp".into()));
+    }
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|_| ApiError::BadRequest("timestamp must be unix millis or RFC 3339".into()))
+}
+
+
 fn validate_marker_name(name: &str) -> Result<(), ApiError> {
     if name.is_empty() || name.len() > 32 {
         return Err(ApiError::BadRequest("marker name must be 1-32 characters".into()));
@@ -405,5 +427,12 @@ fn validate_marker_name(name: &str) -> Result<(), ApiError> {
 
 
 fn to_marker_response(m: &SessionMarker) -> MarkerResponse {
-    MarkerResponse { id: m.id, name: m.name.clone(), snapshot_timestamp: m.snapshot_timestamp.to_rfc3339(), created_at: m.created_at.to_rfc3339() }
+    MarkerResponse {
+        id: m.id,
+        name: m.name.clone(),
+        snapshot_timestamp: m.snapshot_timestamp.timestamp_millis(),
+        snapshot_readable: m.snapshot_timestamp.format("%b %d, %Y %H:%M UTC").to_string(),
+        created_at: m.created_at.timestamp_millis(),
+        created_readable: m.created_at.format("%b %d, %Y %H:%M UTC").to_string(),
+    }
 }

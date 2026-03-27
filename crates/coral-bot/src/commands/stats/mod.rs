@@ -92,17 +92,12 @@ pub(crate) fn looks_like_uuid(s: &str) -> bool {
 
 pub(crate) fn to_guild_info(guild: &GuildResponse) -> GuildInfo {
     let player = guild.player.as_ref();
-    let joined = player
-        .and_then(|p| p.joined.as_ref())
-        .and_then(|j| chrono::DateTime::parse_from_rfc3339(j).ok())
-        .map(|dt| dt.timestamp_millis());
-
     GuildInfo {
         name: Some(guild.name.clone()),
         tag: guild.tag.clone(),
         tag_color: guild.tag_color.clone(),
         rank: player.and_then(|p| p.rank.clone()),
-        joined,
+        joined: player.and_then(|p| p.joined),
         weekly_gexp: player.and_then(|p| p.weekly_gexp),
     }
 }

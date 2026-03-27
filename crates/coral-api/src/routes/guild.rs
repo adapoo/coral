@@ -31,7 +31,9 @@ pub struct GuildResponse {
     pub members: usize,
     pub experience: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub created: Option<String>,
+    pub created: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_readable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player: Option<GuildMemberInfo>,
 }
@@ -43,7 +45,9 @@ pub struct GuildMemberInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub joined: Option<String>,
+    pub joined: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub joined_readable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weekly_gexp: Option<u64>,
 }
@@ -131,9 +135,17 @@ async fn resolve_uuid(state: &AppState, identifier: &str) -> Result<String, ApiE
 }
 
 
+fn millis_readable(millis: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(millis)
+        .map(|dt| dt.format("%b %d, %Y %H:%M UTC").to_string())
+        .unwrap_or_default()
+}
+
+
 fn build_response(guild: &serde_json::Value, player_uuid: Option<&str>) -> GuildResponse {
     let members = guild["members"].as_array();
     let exp = guild["exp"].as_u64().unwrap_or(0);
+    let created = guild["created"].as_i64();
     GuildResponse {
         id: guild["_id"].as_str().unwrap_or_default().to_string(),
         name: guild["name"].as_str().unwrap_or_default().to_string(),
@@ -142,25 +154,28 @@ fn build_response(guild: &serde_json::Value, player_uuid: Option<&str>) -> Guild
         level: calculate_level(exp),
         members: members.map(|m| m.len()).unwrap_or(0),
         experience: exp,
-        created: parse_timestamp(guild["created"].as_i64()),
+        created,
+        created_readable: created.map(millis_readable),
         player: player_uuid.and_then(|uuid| find_member(members, uuid)),
     }
 }
 
 
 fn find_member(members: Option<&Vec<serde_json::Value>>, target: &str) -> Option<GuildMemberInfo> {
-    members?.iter().find(|m| m["uuid"].as_str().is_some_and(|u| normalize_uuid(u) == target)).map(|m| GuildMemberInfo {
+    let joined = members?.iter()
+        .find(|m| m["uuid"].as_str().is_some_and(|u| normalize_uuid(u) == target))
+        .map(|m| m)?;
+    let joined_ts = joined["joined"].as_i64();
+    Some(GuildMemberInfo {
         uuid: target.to_string(),
-        rank: m["rank"].as_str().map(String::from),
-        joined: parse_timestamp(m["joined"].as_i64()),
-        weekly_gexp: m["expHistory"].as_object().map(|exp| exp.values().filter_map(|v| v.as_u64()).sum()),
+        rank: joined["rank"].as_str().map(String::from),
+        joined: joined_ts,
+        joined_readable: joined_ts.map(millis_readable),
+        weekly_gexp: joined["expHistory"].as_object().map(|exp| exp.values().filter_map(|v| v.as_u64()).sum()),
     })
 }
 
 
-fn parse_timestamp(millis: Option<i64>) -> Option<String> {
-    millis.and_then(chrono::DateTime::from_timestamp_millis).map(|dt| dt.to_rfc3339())
-}
 
 
 fn calculate_level(exp: u64) -> u32 {

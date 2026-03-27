@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -25,14 +27,8 @@ pub fn router() -> Router<AppState> {
 #[derive(Serialize, ToSchema)]
 pub struct WinstreakResponse {
     pub uuid: String,
-    pub modes: Vec<ModeWinstreaks>,
-}
-
-
-#[derive(Serialize, ToSchema)]
-pub struct ModeWinstreaks {
-    pub mode: String,
-    pub streaks: Vec<StreakEntry>,
+    #[schema(value_type = HashMap<String, Vec<StreakEntry>>)]
+    pub modes: HashMap<String, Vec<StreakEntry>>,
 }
 
 
@@ -40,7 +36,22 @@ pub struct ModeWinstreaks {
 pub struct StreakEntry {
     pub value: u64,
     pub approximate: bool,
-    pub timestamp: String,
+    pub timestamp: i64,
+    pub readable: String,
+}
+
+
+fn mode_key(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Overall => "overall",
+        Mode::Core => "core",
+        Mode::Solos => "solos",
+        Mode::Doubles => "doubles",
+        Mode::Threes => "threes",
+        Mode::Fours => "fours",
+        Mode::FourVFour => "4v4",
+        _ => "other",
+    }
 }
 
 
@@ -67,14 +78,13 @@ pub async fn player_winstreaks(
 
     let modes = MODES.iter().map(|&mode| {
         let history = winstreaks::calculate(&snapshots, mode);
-        ModeWinstreaks {
-            mode: mode.display_name().to_string(),
-            streaks: history.streaks.into_iter().map(|s| StreakEntry {
-                value: s.value,
-                approximate: s.approximate,
-                timestamp: s.timestamp.to_rfc3339(),
-            }).collect(),
-        }
+        let streaks = history.streaks.into_iter().map(|s| StreakEntry {
+            value: s.value,
+            approximate: s.approximate,
+            timestamp: s.timestamp.timestamp_millis(),
+            readable: s.timestamp.format("%b %d, %Y %H:%M UTC").to_string(),
+        }).collect();
+        (mode_key(mode).to_string(), streaks)
     }).collect();
 
     Ok(Json(WinstreakResponse { uuid, modes }))

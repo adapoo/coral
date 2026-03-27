@@ -909,7 +909,13 @@ fn resolve_view_switch(
         };
     }
 
-    let Some(png) = entry.images.get(image_key).cloned() else { return SwitchResult::Expired };
+    let png = match entry.images.get(image_key).cloned() {
+        Some(png) => png,
+        None => match entry.images.get(&entry.current_view).cloned() {
+            Some(png) => png,
+            None => return SwitchResult::Expired,
+        },
+    };
     entry.current_view = image_key.to_string();
     entry.last_interaction = Instant::now();
 
@@ -1199,11 +1205,7 @@ fn render_all_views(
 
     for period in PERIODS {
         let target_time = period.last_reset(now);
-        let snapshot = snapshot_iter.next().flatten();
-        let cutoff = target_time - period.staleness();
-        let in_range = snapshot.as_ref().is_some_and(|(ts, _)| *ts >= cutoff);
-
-        if let Some(prev) = to_stats(snapshot.map(|(_, v)| v)).filter(|_| in_range) {
+        if let Some(prev) = to_stats(snapshot_iter.next().flatten().map(|(_, v)| v)) {
             render_view(period.key().to_string(), &prev, period_session_type(period), target_time);
         }
     }
